@@ -96,7 +96,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
 
   const loadConversationMessages = async () => {
     if (!activeConversation || activeConversation === 'new') return;
-    
+  
     setLoadingMessages(true);
     
     try {
@@ -106,15 +106,15 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       
       setConversationData(conversationWithMessages);
       
-      // Transform messages to the format expected by ChatMessages component
+      // ✅ FIX: Transform messages to match expected format
       const transformedMessages = conversationWithMessages.messages?.map((msg: any) => ({
         id: msg.id,
         type: msg.message_type,
         content: msg.content,
         sql: msg.generated_sql,
-        data: msg.query_results?.data,
+        data: msg.query_results?.data,  // ✅ Use nested data
         chart: msg.chart_data,
-        summary: msg.summary ? {
+        summary: msg.summary ? {  // ✅ Use separate summary field
           title: "Query Results Summary",
           insights: [msg.summary],
           recommendation: "Continue exploring your data with follow-up questions."

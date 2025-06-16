@@ -9,7 +9,7 @@ export const chatService = {
       const response = await api.get('/connections');
       console.log('✅ Connections loaded:', response.data);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Failed to load connections:', error);
       throw error;
     }
@@ -23,7 +23,7 @@ export const chatService = {
       const response = await api.get('/conversations', { params });
       console.log('✅ Conversations loaded:', response.data);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Failed to load conversations:', error);
       throw error;
     }
@@ -36,7 +36,7 @@ export const chatService = {
       const response = await api.get(`/conversations/${conversationId}`);
       console.log('✅ Conversation with messages loaded:', response.data);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error(`❌ Failed to load conversation ${conversationId}:`, error);
       
       // Handle specific error cases
@@ -61,7 +61,7 @@ export const chatService = {
       });
       console.log('✅ Conversation created:', response.data);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Failed to create conversation:', error);
       throw error;
     }
@@ -77,7 +77,7 @@ export const chatService = {
       
       console.log('✅ Conversation deleted successfully:', response.data);
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Failed to delete conversation:', error);
       
       // Handle specific error cases
@@ -111,7 +111,7 @@ export const chatService = {
         // This should not happen in the backend flow - conversations must be created first
         throw new Error('Backend requires conversation to be created first. Use createConversation()');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Failed to send query:', error);
       throw error;
     }
@@ -124,7 +124,7 @@ export const chatService = {
       const response = await api.get(`/conversations/${conversationId}/questions`);
       console.log('✅ Suggested questions loaded:', response.data);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Failed to load suggested questions:', error);
       throw error;
     }
@@ -137,7 +137,7 @@ export const chatService = {
       const response = await api.get(`/conversations/sessions/${sessionId}/status`);
       console.log('✅ Session status loaded:', response.data);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Failed to load session status:', error);
       throw error;
     }

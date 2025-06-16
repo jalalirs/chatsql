@@ -208,6 +208,11 @@ class ConversationService:
             )
             return
         
+        if data:
+            response_content = f"I found {len(data)} records for your query. The results show data from {connection.name}."
+        else:
+            response_content = "Your query executed successfully but returned no results."
+        
         # Prepare assistant response
         response_content = f"I found {len(data)} records for your query."
         query_results = data
@@ -216,6 +221,11 @@ class ConversationService:
         followup_questions = []
         
         if data:
+            query_results = {
+                "data": data,
+                "total_rows": len(data),
+                "columns": list(data[0].keys()) if data else []
+            }
             # Generate chart if appropriate
             await sse_logger.progress(70, "Checking if chart should be generated...")
             chart_result = await self._generate_chart(vanna_instance, question, sql, data, sse_logger, session_id, user)
@@ -224,30 +234,31 @@ class ConversationService:
             
             # Generate summary
             await sse_logger.progress(85, "Generating summary...")
-            summary = await self._generate_summary(vanna_instance, question, data, sse_logger, session_id, user)
+            summary = await self._generate_summary(vanna_instance, question, data, sse_logger, session_id, user)            
             if summary:
-                response_content = summary
+                response_content = f"I found {len(data)} records for your query. I've analyzed the results and generated insights below."
             
             # Generate follow-up questions
-            await sse_logger.progress(95, "Generating follow-up questions...")
-            followup_questions = await self._generate_followup_questions(
-                vanna_instance, question, sql, data, sse_logger, session_id, user
-            )
+            # await sse_logger.progress(95, "Generating follow-up questions...")
+            # followup_questions = await self._generate_followup_questions(
+            #     vanna_instance, question, sql, data, sse_logger, session_id, user
+            # )
         
         # Save assistant response
         from app.models.schemas import MessageCreate
         assistant_message = await self.add_message(
             conversation,
             MessageCreate(
-                conversation_id=str(conversation.id),  # Add this line
-                content=response_content, 
-                message_type=MessageType.ASSISTANT
+                conversation_id=str(conversation.id),
+                content=response_content,  # Keep generic message
+                message_type=MessageType.ASSISTANT,
+                generated_sql=sql,
+                query_results=query_results,  # Properly wrapped data
+                chart_data=chart_data,
+                summary=summary,  # ✅ Store summary separately
+                row_count=len(data) if data else 0
             ),
-            db,
-            generated_sql=sql,
-            query_results=query_results,
-            chart_data=chart_data,
-            row_count=len(data) if data else 0
+            db
         )
         
         await sse_logger.progress(100, "Query processing completed")
@@ -784,30 +795,131 @@ class ConversationService:
         
         return result
 
+    # Add this method to your existing ConversationService class in conversation_service.py
+
+    async def get_conversation_with_messages(
+        self, 
+        conversation_id: str, 
+        user: User, 
+        db: AsyncSession
+    ) -> Optional[ConversationWithMessagesResponse]:
+        """Get conversation with all messages for a specific user"""
+        try:
+            conversation_uuid = uuid.UUID(conversation_id)
+            
+            # Get conversation and verify user ownership
+            stmt = select(Conversation).where(
+                Conversation.id == conversation_uuid,
+                Conversation.user_id == user.id
+            )
+            result = await db.execute(stmt)
+            conversation = result.scalar_one_or_none()
+            
+            if not conversation:
+                logger.warning(f"Conversation {conversation_id} not found for user {user.email}")
+                return None
+            
+            # Get all messages for this conversation
+            stmt = select(Message).where(
+                Message.conversation_id == conversation_uuid
+            ).order_by(Message.created_at.asc())
+            
+            result = await db.execute(stmt)
+            messages = result.scalars().all()
+            
+            # Convert messages to response format
+            message_responses = []
+            for msg in messages:
+                message_responses.append(MessageResponse(
+                    id=str(msg.id),
+                    conversation_id=str(msg.conversation_id),
+                    message_type=msg.message_type,
+                    content=msg.content,
+                    generated_sql=msg.generated_sql,
+                    query_results=msg.query_results,
+                    chart_data=msg.chart_data,
+                    summary=msg.summary,
+                    execution_time=msg.execution_time,        # ✅ ADD THIS
+                    row_count=msg.row_count,                  # ✅ ADD THIS
+                    tokens_used=msg.tokens_used,              # ✅ ADD THIS
+                    model_used=msg.model_used,                # ✅ ADD THIS
+                    is_edited=msg.is_edited,                  # ✅ ADD THIS
+                    is_deleted=msg.is_deleted,                # ✅ ADD THIS
+                    created_at=msg.created_at,
+                    updated_at=msg.updated_at
+                ))
+            
+            # Get connection name
+            conn_stmt = select(Connection.name).where(Connection.id == conversation.connection_id)
+            conn_result = await db.execute(conn_stmt)
+            connection_name = conn_result.scalar()
+            
+            return ConversationWithMessagesResponse(
+                id=str(conversation.id),
+                connection_id=str(conversation.connection_id),
+                connection_name=connection_name,
+                title=conversation.title,
+                description=conversation.description,
+                is_active=conversation.is_active,
+                is_pinned=conversation.is_pinned,
+                connection_locked=conversation.connection_locked,
+                message_count=len(message_responses),
+                total_queries=conversation.total_queries or 0,
+                created_at=conversation.created_at,
+                updated_at=conversation.updated_at,
+                last_message_at=conversation.last_message_at,
+                messages=message_responses
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to get conversation with messages {conversation_id} for user {user.email}: {e}")
+            raise
+
+    # Also update your existing delete_conversation method to fix the SQL error:
+
     async def delete_conversation(
         self,
+        conversation_id: str,  # Move conversation_id to first parameter
         user: User,
-        conversation_id: str,
         db: AsyncSession
     ) -> bool:
         """Delete a conversation that belongs to user"""
-        
-        conversation = await self.get_conversation(conversation_id, user, db)
-        if not conversation:
-            return False
-        
         try:
-            # Delete conversation (messages will be deleted via cascade)
-            await db.delete(conversation)
+            conversation_uuid = uuid.UUID(conversation_id)
+            
+            # First verify the conversation belongs to the user
+            stmt = select(Conversation).where(
+                Conversation.id == conversation_uuid,
+                Conversation.user_id == user.id
+            )
+            result = await db.execute(stmt)
+            conversation = result.scalar_one_or_none()
+            
+            if not conversation:
+                logger.warning(f"Conversation {conversation_id} not found for user {user.email}")
+                return False
+            
+            # Delete all messages first (due to foreign key constraints)
+            from sqlalchemy import delete
+            delete_messages_stmt = delete(Message).where(Message.conversation_id == conversation_uuid)
+            await db.execute(delete_messages_stmt)
+            
+            # Delete the conversation
+            delete_conversation_stmt = delete(Conversation).where(
+                Conversation.id == conversation_uuid,
+                Conversation.user_id == user.id
+            )
+            await db.execute(delete_conversation_stmt)
+            
             await db.commit()
             
-            logger.info(f"Deleted conversation {conversation_id} for user {user.email}")
+            logger.info(f"Successfully deleted conversation {conversation_id} for user {user.email}")
             return True
             
         except Exception as e:
             await db.rollback()
             logger.error(f"Failed to delete conversation {conversation_id} for user {user.email}: {e}")
-            return False
+            raise
     
     async def add_message(
         self,
@@ -823,6 +935,11 @@ class ConversationService:
             conversation_id=conversation.id,
             content=message_data.content,
             message_type=message_data.message_type,
+            generated_sql=getattr(message_data, 'generated_sql', None),
+            query_results=getattr(message_data, 'query_results', None),
+            chart_data=getattr(message_data, 'chart_data', None),
+            summary=getattr(message_data, 'summary', None),  # ✅ ADD THIS
+            row_count=getattr(message_data, 'row_count', None),
             **additional_data
         )
         

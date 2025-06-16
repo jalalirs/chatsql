@@ -119,6 +119,7 @@ class Message(Base):
     generated_sql = Column(Text, nullable=True)  # SQL generated for this query
     query_results = Column(JSONB, nullable=True)  # Results data
     chart_data = Column(JSONB, nullable=True)  # Chart configuration
+    summary = Column(Text, nullable=True)  # ✅ ADD THIS LINE
     execution_time = Column(Integer, nullable=True)  # Query execution time in ms
     row_count = Column(Integer, nullable=True)  # Number of rows returned
     

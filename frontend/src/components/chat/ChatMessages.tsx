@@ -36,17 +36,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
           <p className="text-gray-600 mb-6">
             Ask questions about your database in natural language. I'll generate SQL queries and show you the results.
           </p>
-          <div className="grid gap-2 text-sm">
-            <button className="p-3 text-left border rounded-lg hover:bg-gray-50 transition-colors">
-              "Show me the top 10 customers by revenue"
-            </button>
-            <button className="p-3 text-left border rounded-lg hover:bg-gray-50 transition-colors">
-              "What were our sales trends last quarter?"
-            </button>
-            <button className="p-3 text-left border rounded-lg hover:bg-gray-50 transition-colors">
-              "Which products are most popular this month?"
-            </button>
-          </div>
+          
         </div>
       </div>
     );

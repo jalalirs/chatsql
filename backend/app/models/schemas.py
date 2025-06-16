@@ -286,14 +286,15 @@ class QueryResult(BaseModel):
 
 class MessageResponse(BaseModel):
     id: str
+    conversation_id: str              # ✅ ADD THIS - it was missing
     content: str
     message_type: MessageType
     
     # Query result data (for assistant messages)
     generated_sql: Optional[str] = None
-    query_results: Optional[Dict[str, Any]] = None  # DataResponse
-    chart_data: Optional[Dict[str, Any]] = None     # PlotResponse
-    summary: Optional[str] = None                   # SummaryResponse.summary
+    query_results: Optional[Dict[str, Any]] = None
+    chart_data: Optional[Dict[str, Any]] = None
+    summary: Optional[str] = None
     
     # Metadata
     execution_time: Optional[int] = None
@@ -301,12 +302,13 @@ class MessageResponse(BaseModel):
     tokens_used: Optional[int] = None
     model_used: Optional[str] = None
     is_edited: bool
+    is_deleted: bool = False          # ✅ ADD THIS - it was missing
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
-
+        
 class MessageCreate(BaseModel):
     conversation_id: str
     content: str
@@ -319,6 +321,7 @@ class MessageCreate(BaseModel):
     row_count: Optional[int] = None
     tokens_used: Optional[int] = None
     model_used: Optional[str] = None
+    is_deleted: bool = False  # ✅ ADD THIS
 
 class ConversationCreate(BaseModel):
     connection_id: str
