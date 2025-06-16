@@ -21,7 +21,7 @@ export const chatService = {
     return response.data;
   },
 
-  // Create new conversation
+  // Create new conversation - UPDATED to match backend
   async createConversation(connectionId: string, title?: string): Promise<Conversation> {
     const response = await api.post('/conversations', {
       connection_id: connectionId,
@@ -30,13 +30,29 @@ export const chatService = {
     return response.data;
   },
 
-  // Send message/query - FIXED: Added connection_id parameter
+  // Send query - UPDATED to handle backend conversation flow
   async sendQuery(question: string, conversationId?: string, connectionId?: string) {
-    const response = await api.post('/conversations/query', {
-      question,
-      conversation_id: conversationId,
-      connection_id: connectionId // Add connection_id to request
-    });
+    if (conversationId && conversationId !== 'new') {
+      // Query to existing conversation
+      const response = await api.post(`/conversations/${conversationId}/query`, {
+        question
+      });
+      return response.data;
+    } else {
+      // This should not happen in the backend flow - conversations must be created first
+      throw new Error('Backend requires conversation to be created first. Use createConversation()');
+    }
+  },
+
+  // Get suggested questions for a conversation
+  async getSuggestedQuestions(conversationId: string) {
+    const response = await api.get(`/conversations/${conversationId}/questions`);
+    return response.data;
+  },
+
+  // Get session status
+  async getSessionStatus(sessionId: string) {
+    const response = await api.get(`/conversations/sessions/${sessionId}/status`);
     return response.data;
   }
 };

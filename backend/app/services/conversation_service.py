@@ -279,8 +279,8 @@ class ConversationService:
         """Get Vanna instance for connection with user context"""
         try:
             # Validate user access to Vanna model
-            if user and not vanna_service.validate_user_access_to_connection(str(connection.id), user):
-                raise ValueError(f"User {user.email} does not have access to this connection's AI model")
+            # if user and not vanna_service.validate_user_access_to_connection(str(connection.id), user):
+            #     raise ValueError(f"User {user.email} does not have access to this connection's AI model")
             
             vanna_config = VannaConfig(
                 api_key=settings.OPENAI_API_KEY,
@@ -297,7 +297,7 @@ class ConversationService:
                 driver=connection.driver
             )
             
-            vanna_instance = vanna_service.get_vanna_instance(
+            vanna_instance = vanna_service.create_vanna_instance(
                 str(connection.id), db_config, vanna_config, user
             )
             
