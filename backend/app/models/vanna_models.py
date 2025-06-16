@@ -23,6 +23,14 @@ class DatabaseConfig(BaseModel):
         default="ODBC Driver 17 for SQL Server",
         description="Database driver name"
     )
+    encrypt: bool = Field(
+        default=False,
+        description="Whether to use encryption for the connection"
+    )
+    trust_server_certificate: bool = Field(
+        default=True,
+        description="Whether to trust the server certificate"
+    )
     
     def to_odbc_connection_string(self) -> str:
         """Convert to ODBC connection string for SQL Server"""
@@ -35,10 +43,9 @@ class DatabaseConfig(BaseModel):
             f"DATABASE={self.database_name};"
             f"UID={self.username};"
             f"PWD={self.password};"
-            f"TrustServerCertificate=yes;"
-            f"Encrypt=no;"  
+            f"Encrypt={'yes' if self.encrypt else 'no'};"
+            f"TrustServerCertificate={'yes' if self.trust_server_certificate else 'no'};"
         )
-        print(connection_string)
         return connection_string
 
 class ColumnInfo(BaseModel):

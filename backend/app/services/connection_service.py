@@ -26,6 +26,41 @@ class ConnectionService:
     def __init__(self):
         self.data_dir = settings.DATA_DIR
     
+    def _build_odbc_connection_string(self, connection_data: ConnectionCreate) -> str:
+        """Build ODBC connection string with proper boolean handling"""
+        # Convert boolean values to ODBC format
+        encrypt_value = getattr(connection_data, 'encrypt', True)
+        trust_cert_value = getattr(connection_data, 'trust_server_certificate', False)
+        
+        encrypt_str = 'yes' if encrypt_value else 'no'
+        trust_cert_str = 'yes' if trust_cert_value else 'no'
+        
+        return (
+            f"DRIVER={getattr(connection_data, 'driver', 'ODBC Driver 17 for SQL Server')};"
+            f"SERVER={connection_data.server};"
+            f"DATABASE={connection_data.database_name};"
+            f"UID={connection_data.username};"
+            f"PWD={connection_data.password};"
+            f"Encrypt={encrypt_str};"
+            f"TrustServerCertificate={trust_cert_str};"
+        )
+    
+    def _build_odbc_connection_string_from_db(self, connection: Connection) -> str:
+        """Build ODBC connection string from database connection object"""
+        # Convert boolean values to ODBC format
+        encrypt_str = 'yes' if connection.encrypt else 'no'
+        trust_cert_str = 'yes' if connection.trust_server_certificate else 'no'
+        
+        return (
+            f"DRIVER={connection.driver or 'ODBC Driver 17 for SQL Server'};"
+            f"SERVER={connection.server};"
+            f"DATABASE={connection.database_name};"
+            f"UID={connection.username};"
+            f"PWD={connection.password};"
+            f"Encrypt={encrypt_str};"
+            f"TrustServerCertificate={trust_cert_str};"
+        )
+    
     async def test_connection(self, connection_data: ConnectionCreate, task_id: str) -> ConnectionTestResult:
         """Test database connection and analyze schema"""
         sse_logger = SSELogger(sse_manager, task_id, "connection_test")
@@ -34,18 +69,8 @@ class ConnectionService:
             await sse_logger.info(f"Starting connection test for {connection_data.name}")
             await sse_logger.progress(10, "Connecting to database...")
             
-            # Create database config
-            db_config = DatabaseConfig(
-                server=connection_data.server,
-                database_name=connection_data.database_name,
-                username=connection_data.username,
-                password=connection_data.password,
-                table_name=connection_data.table_name,
-                driver=connection_data.driver if hasattr(connection_data, 'driver') else None
-            )
-                        
             # Test connection
-            conn_str = db_config.to_odbc_connection_string()
+            conn_str = self._build_odbc_connection_string(connection_data)
             
             try:
                 cnxn = pyodbc.connect(conn_str, timeout=30)
@@ -225,7 +250,7 @@ class ConnectionService:
             return []
     
     # ========================
-    # USER-SPECIFIC CONNECTION METHODS (UPDATED)
+    # USER-SPECIFIC CONNECTION METHODS
     # ========================
     
     async def get_user_connection_by_name(self, db: AsyncSession, user_id: str, name: str) -> Optional[Connection]:
@@ -252,7 +277,7 @@ class ConnectionService:
         try:
             # Create connection record with user_id
             connection = Connection(
-                user_id=user.id,  # Associate with user
+                user_id=user.id,
                 name=connection_data.name,
                 server=connection_data.server,
                 database_name=connection_data.database_name,
@@ -260,6 +285,8 @@ class ConnectionService:
                 password=connection_data.password,  # TODO: Encrypt in production
                 table_name=connection_data.table_name,
                 driver=getattr(connection_data, 'driver', None),
+                encrypt=getattr(connection_data, 'encrypt', False),
+                trust_server_certificate=getattr(connection_data, 'trust_server_certificate', True),
                 status=ConnectionStatus.TEST_SUCCESS,
                 column_descriptions_uploaded=bool(column_descriptions)
             )
@@ -269,24 +296,9 @@ class ConnectionService:
             
             connection_id = str(connection.id)
             
-            # Create data directory
+            # Create data directory (only for file storage like schema cache, backups, etc.)
             connection_dir = os.path.join(self.data_dir, "connections", connection_id)
             os.makedirs(connection_dir, exist_ok=True)
-            
-            # Save database config
-            db_config = {
-                "user_id": str(user.id),
-                "server": connection_data.server,
-                "database_name": connection_data.database_name,
-                "username": connection_data.username,
-                "password": connection_data.password,
-                "table_name": connection_data.table_name,
-                "driver": getattr(connection_data, 'driver', None)
-            }
-            
-            config_path = os.path.join(connection_dir, "db_config.json")
-            with open(config_path, 'w') as f:
-                json.dump(db_config, f, indent=2)
             
             # Save column descriptions if provided
             if column_descriptions:
@@ -300,7 +312,7 @@ class ConnectionService:
                     )
                     db.add(column_desc_record)
                 
-                # Also save as CSV file
+                # Also save as CSV file for backup/export
                 csv_path = os.path.join(connection_dir, "column_descriptions.csv")
                 with open(csv_path, 'w', newline='') as f:
                     f.write("column,description\n")
@@ -311,6 +323,20 @@ class ConnectionService:
             
             await db.commit()
             
+            # AUTOMATICALLY GENERATE SCHEMA upon creation
+            try:
+                temp_task_id = str(uuid.uuid4())
+                schema_result = await self.refresh_connection_schema(
+                    connection_data, connection_id, temp_task_id
+                )
+                if schema_result.success:
+                    logger.info(f"Auto-generated schema for new connection {connection_id}")
+                else:
+                    logger.warning(f"Schema auto-generation failed for new connection {connection_id}: {schema_result.error_message}")
+            except Exception as e:
+                logger.warning(f"Auto schema generation failed for new connection {connection_id}: {e}")
+                # Don't fail connection creation if schema generation fails
+            
             # Convert to response model
             return ConnectionResponse(
                 id=connection_id,
@@ -319,6 +345,8 @@ class ConnectionService:
                 database_name=connection.database_name,
                 table_name=connection.table_name,
                 driver=connection.driver,
+                encrypt=connection.encrypt,
+                trust_server_certificate=connection.trust_server_certificate,
                 status=connection.status,
                 test_successful=connection.test_successful,
                 column_descriptions_uploaded=connection.column_descriptions_uploaded,
@@ -352,6 +380,8 @@ class ConnectionService:
                     database_name=conn.database_name,
                     table_name=conn.table_name,
                     driver=conn.driver,
+                    encrypt=conn.encrypt,
+                    trust_server_certificate=conn.trust_server_certificate,
                     status=conn.status,
                     test_successful=conn.test_successful,
                     column_descriptions_uploaded=conn.column_descriptions_uploaded,
@@ -388,6 +418,8 @@ class ConnectionService:
                 database_name=connection.database_name,
                 table_name=connection.table_name,
                 driver=connection.driver,
+                encrypt=connection.encrypt,
+                trust_server_certificate=connection.trust_server_certificate,
                 status=connection.status,
                 test_successful=connection.test_successful,
                 column_descriptions_uploaded=connection.column_descriptions_uploaded,
@@ -446,7 +478,7 @@ class ConnectionService:
             return False
     
     # ========================
-    # EXISTING METHODS (KEPT FOR TRAINING/ADMIN USE)
+    # UTILITY METHODS
     # ========================
     
     async def get_training_data_view(self, db: AsyncSession, connection_id: str) -> Optional[TrainingDataView]:
@@ -557,18 +589,8 @@ Key Guidelines:
             await sse_logger.info(f"Starting schema refresh for connection {connection_id}")
             await sse_logger.progress(10, "Connecting to database...")
             
-            # Create database config
-            db_config = DatabaseConfig(
-                server=connection_data.server,
-                database_name=connection_data.database_name,
-                username=connection_data.username,
-                password=connection_data.password,
-                table_name=connection_data.table_name,
-                driver=connection_data.driver if hasattr(connection_data, 'driver') else None
-            )
-            
             # Test connection
-            conn_str = db_config.to_odbc_connection_string()
+            conn_str = self._build_odbc_connection_string(connection_data)
             
             try:
                 cnxn = pyodbc.connect(conn_str, timeout=30)
@@ -605,7 +627,7 @@ Key Guidelines:
             
             await sse_logger.progress(90, "Saving schema information...")
             
-            # Save schema to storage
+            # Save schema to storage (for caching purposes)
             await self._save_schema_data(connection_id, column_info, sample_data)
             
             await sse_logger.progress(100, "Schema refresh completed successfully")
@@ -634,7 +656,7 @@ Key Guidelines:
         column_info: Dict[str, Any], 
         sample_data: List[Dict[str, Any]]
     ):
-        """Save schema information to storage"""
+        """Save schema information to storage for caching"""
         try:
             connection_dir = os.path.join(self.data_dir, "connections", connection_id)
             os.makedirs(connection_dir, exist_ok=True)
@@ -654,14 +676,14 @@ Key Guidelines:
             with open(schema_path, 'w') as f:
                 json.dump(schema_data, f, indent=2, default=str)
             
-            logger.info(f"Saved schema data for connection {connection_id}")
+            logger.info(f"Saved schema cache for connection {connection_id}")
             
         except Exception as e:
-            logger.error(f"Failed to save schema data for {connection_id}: {e}")
+            logger.error(f"Failed to save schema cache for {connection_id}: {e}")
             raise
     
     async def get_connection_schema(self, connection_id: str) -> Optional[Dict[str, Any]]:
-        """Get stored schema information"""
+        """Get cached schema information"""
         try:
             connection_dir = os.path.join(self.data_dir, "connections", connection_id)
             schema_path = os.path.join(connection_dir, "schema.json")
@@ -675,7 +697,7 @@ Key Guidelines:
             return schema_data
             
         except Exception as e:
-            logger.error(f"Failed to get schema for connection {connection_id}: {e}")
+            logger.error(f"Failed to get cached schema for connection {connection_id}: {e}")
             return None
     
     async def get_column_descriptions(
@@ -685,7 +707,7 @@ Key Guidelines:
     ) -> List[Dict[str, Any]]:
         """Get column descriptions from database and merge with schema info"""
         try:
-            # Get schema information
+            # Get schema information from cache
             schema_data = await self.get_connection_schema(connection_id)
             if not schema_data:
                 return []
@@ -799,114 +821,6 @@ Key Guidelines:
             await db.rollback()
             logger.error(f"Failed to update column descriptions flag: {e}")
             return False
-    
-    # Update the existing create_connection_for_user method to auto-refresh schema
-    # In app/services/connection_service.py, update the create_connection_for_user method:
-
-    async def create_connection_for_user(
-        self, 
-        db: AsyncSession, 
-        user: User,
-        connection_data: ConnectionCreate, 
-        column_descriptions: Optional[List[ColumnDescriptionItem]] = None
-    ) -> ConnectionResponse:
-        """Create a new connection for a specific user"""
-        try:
-            # Create connection record with user_id
-            connection = Connection(
-                user_id=user.id,
-                name=connection_data.name,
-                server=connection_data.server,
-                database_name=connection_data.database_name,
-                username=connection_data.username,
-                password=connection_data.password,
-                table_name=connection_data.table_name,
-                driver=getattr(connection_data, 'driver', None),
-                status=ConnectionStatus.TEST_SUCCESS,
-                column_descriptions_uploaded=bool(column_descriptions)
-            )
-            
-            db.add(connection)
-            await db.flush()
-            
-            connection_id = str(connection.id)
-            
-            # Create data directory
-            connection_dir = os.path.join(self.data_dir, "connections", connection_id)
-            os.makedirs(connection_dir, exist_ok=True)
-            
-            # Save database config
-            db_config = {
-                "user_id": str(user.id),
-                "server": connection_data.server,
-                "database_name": connection_data.database_name,
-                "username": connection_data.username,
-                "password": connection_data.password,
-                "table_name": connection_data.table_name,
-                "driver": getattr(connection_data, 'driver', None)
-            }
-            
-            config_path = os.path.join(connection_dir, "db_config.json")
-            with open(config_path, 'w') as f:
-                json.dump(db_config, f, indent=2)
-            
-            # Save column descriptions if provided
-            if column_descriptions:
-                for col_desc in column_descriptions:
-                    column_desc_record = ColumnDescription(
-                        connection_id=connection.id,
-                        column_name=col_desc.column_name,
-                        description=col_desc.description,
-                        data_type=col_desc.data_type,
-                        variable_range=col_desc.variable_range
-                    )
-                    db.add(column_desc_record)
-                
-                csv_path = os.path.join(connection_dir, "column_descriptions.csv")
-                with open(csv_path, 'w', newline='') as f:
-                    f.write("column,description\n")
-                    for col_desc in column_descriptions:
-                        desc = col_desc.description.replace('"', '""') if col_desc.description else ""
-                        f.write(f'"{col_desc.column_name}","{desc}"\n')
-            
-            await db.commit()
-            
-            # AUTOMATICALLY GENERATE SCHEMA upon creation (NEW)
-            try:
-                temp_task_id = str(uuid.uuid4())
-                schema_result = await self.refresh_connection_schema(
-                    connection_data, connection_id, temp_task_id
-                )
-                if schema_result.success:
-                    logger.info(f"Auto-generated schema for new connection {connection_id}")
-                else:
-                    logger.warning(f"Schema auto-generation failed for new connection {connection_id}: {schema_result.error_message}")
-            except Exception as e:
-                logger.warning(f"Auto schema generation failed for new connection {connection_id}: {e}")
-                # Don't fail connection creation if schema generation fails
-            
-            # Convert to response model
-            return ConnectionResponse(
-                id=connection_id,
-                name=connection.name,
-                server=connection.server,
-                database_name=connection.database_name,
-                table_name=connection.table_name,
-                driver=connection.driver,
-                status=connection.status,
-                test_successful=connection.test_successful,
-                column_descriptions_uploaded=connection.column_descriptions_uploaded,
-                generated_examples_count=connection.generated_examples_count,
-                total_queries=connection.total_queries or 0,
-                last_queried_at=connection.last_queried_at,
-                created_at=connection.created_at,
-                trained_at=connection.trained_at
-            )
-            
-        except Exception as e:
-            await db.rollback()
-            logger.error(f"Failed to create connection for user {user.email}: {e}")
-            raise
 
 # Global connection service instance
 connection_service = ConnectionService()

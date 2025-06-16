@@ -12,13 +12,27 @@ export const ChatLayout: React.FC = () => {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const handleNewConversation = () => {
+    console.log('🆕 Creating new conversation');
     setActiveConversation('new');
   };
 
   const handleConversationCreated = (conversationId: string) => {
+    console.log('✅ Conversation created:', conversationId);
     // Switch to the new conversation
     setActiveConversation(conversationId);
     // Refresh the sidebar to show new conversation
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleConversationDeleted = (conversationId: string) => {
+    console.log('🗑️ Conversation deleted:', conversationId);
+    
+    // If the deleted conversation was active, switch to new conversation
+    if (activeConversation === conversationId) {
+      setActiveConversation('new');
+    }
+    
+    // Refresh the sidebar to remove deleted conversation
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -38,6 +52,7 @@ export const ChatLayout: React.FC = () => {
         onManageConnections={handleManageConnections}
         onLogout={logout}
         refreshTrigger={refreshTrigger}
+        onConversationDeleted={handleConversationDeleted}
       />
 
       {/* Main Chat Area */}

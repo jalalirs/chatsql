@@ -1,0 +1,13 @@
+fix conversation switching 
+fix encryption vs no encryption (Done)
+add plot
+remove examples in conversation page
+allow deleting examples
+allow adding manual examples
+change regenerate to generate
+add better navigation between connection and chat
+fix number of messages in right pannel
+allow to modify generation prompts
+allow to generate column description using AI
+move training data to database
+fix wrong error message after generating data abd training data     

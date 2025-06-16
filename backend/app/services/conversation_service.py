@@ -294,7 +294,9 @@ class ConversationService:
                 username=connection.username,
                 password=connection.password,
                 table_name=connection.table_name,
-                driver=connection.driver
+                driver=connection.driver,
+                encrypt=connection.encrypt,
+                trust_server_certificate=connection.trust_server_certificate
             )
             
             vanna_instance = vanna_service.create_vanna_instance(

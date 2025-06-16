@@ -201,6 +201,8 @@ class UserService:
                 database_name=conn.database_name,
                 table_name=conn.table_name,
                 driver=conn.driver,
+                encrypt=conn.encrypt,
+                trust_server_certificate=conn.trust_server_certificate,
                 status=conn.status,
                 test_successful=conn.test_successful,
                 column_descriptions_uploaded=conn.column_descriptions_uploaded,

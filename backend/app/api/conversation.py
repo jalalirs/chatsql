@@ -39,6 +39,8 @@ async def create_conversation(
         )
         connection_name = connection_result.scalar()
         
+        logger.info(f"Created conversation {conversation.id} for user {current_user.email}")
+        
         return ConversationResponse(
             id=str(conversation.id),
             connection_id=str(conversation.connection_id),
@@ -58,7 +60,7 @@ async def create_conversation(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to create conversation: {e}")
+        logger.error(f"Failed to create conversation for user {current_user.email}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create conversation: {str(e)}"
@@ -76,13 +78,24 @@ async def process_conversation_query(
 ):
     """Process a query in a conversation"""
     try:
+        # Verify conversation exists and belongs to user
+        conversation = await conversation_service.get_conversation(
+            conversation_id, current_user, db
+        )
+        
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found or access denied"
+            )
+        
         # Create session for this query
         session_id = str(uuid.uuid4())
         
         # Create task for tracking
         task = TrainingTask(
             id=session_id,
-            connection_id=None,  # Will be set when we know the connection
+            connection_id=str(conversation.connection_id),  # Set connection ID from conversation
             user_id=current_user.id,
             task_type="query",
             status="running"
@@ -90,6 +103,8 @@ async def process_conversation_query(
         
         db.add(task)
         await db.commit()
+        
+        logger.info(f"Starting query processing for conversation {conversation_id}, session {session_id}")
         
         # Start query processing in background
         background_tasks.add_task(
@@ -106,9 +121,11 @@ async def process_conversation_query(
             user_message_id="",  # Will be updated via SSE
             stream_url=f"/events/stream/{session_id}",
             is_new_conversation=False,
-            connection_locked=False  # Will be updated via SSE
+            connection_locked=conversation.connection_locked
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to start conversation query processing: {e}")
         raise HTTPException(
@@ -124,14 +141,16 @@ async def get_user_conversations(
 ):
     """Get user's conversations"""
     try:
+        logger.info(f"Loading conversations for user {current_user.email}")
         conversations = await conversation_service.get_user_conversations(
             current_user, db, connection_id
         )
         
+        logger.info(f"Found {len(conversations)} conversations for user {current_user.email}")
         return conversations
         
     except Exception as e:
-        logger.error(f"Failed to get conversations: {e}")
+        logger.error(f"Failed to get conversations for user {current_user.email}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get conversations: {str(e)}"
@@ -177,25 +196,118 @@ async def get_conversation_with_messages(
 ):
     """Get conversation with all messages"""
     try:
+        logger.info(f"Loading conversation {conversation_id} for user {current_user.email}")
+        
         conversation = await conversation_service.get_conversation_with_messages(
             conversation_id, current_user, db
         )
         
         if not conversation:
+            logger.warning(f"Conversation {conversation_id} not found for user {current_user.email}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Conversation not found"
+                detail="Conversation not found or access denied"
             )
         
+        logger.info(f"Loaded conversation {conversation_id} with {len(conversation.messages or [])} messages")
         return conversation
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get conversation: {e}")
+        logger.error(f"Failed to get conversation {conversation_id} for user {current_user.email}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get conversation: {str(e)}"
+        )
+
+
+@router.delete("/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(validate_api_key)
+):
+    """Delete a conversation"""
+    try:
+        success = await conversation_service.delete_conversation(
+            conversation_id, current_user, db
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found or access denied"
+            )
+        
+        logger.info(f"Deleted conversation {conversation_id} for user {current_user.email}")
+        return {"success": True, "message": "Conversation deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete conversation {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete conversation: {str(e)}"
+        )
+
+
+@router.patch("/{conversation_id}")
+async def update_conversation(
+    conversation_id: str,
+    update_data: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(validate_api_key)
+):
+    """Update conversation (title, pinned status, etc.)"""
+    try:
+        conversation = await conversation_service.update_conversation(
+            conversation_id, current_user, update_data, db
+        )
+        
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found or access denied"
+            )
+        
+        logger.info(f"Updated conversation {conversation_id} for user {current_user.email}")
+        
+        # Get connection name for response
+        from app.models.database import Connection
+        from sqlalchemy import select
+        
+        connection_result = await db.execute(
+            select(Connection.name).where(Connection.id == conversation.connection_id)
+        )
+        connection_name = connection_result.scalar()
+        
+        return ConversationResponse(
+            id=str(conversation.id),
+            connection_id=str(conversation.connection_id),
+            connection_name=connection_name,
+            title=conversation.title,
+            description=conversation.description,
+            is_active=conversation.is_active,
+            is_pinned=conversation.is_pinned,
+            connection_locked=conversation.connection_locked,
+            message_count=conversation.message_count,
+            total_queries=conversation.total_queries,
+            created_at=conversation.created_at,
+            updated_at=conversation.updated_at,
+            last_message_at=conversation.last_message_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update conversation {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update conversation: {str(e)}"
         )
 
 
@@ -216,7 +328,7 @@ async def get_suggested_questions_for_conversation(
         if not conversation:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Conversation not found"
+                detail="Conversation not found or access denied"
             )
         
         result = await conversation_service.get_suggested_questions(
@@ -323,7 +435,15 @@ async def _run_conversation_query_processing(
     
     async with get_db_session() as db:
         try:
+            logger.info(f"Processing query for user {user.email}, conversation {conversation_id}, session {session_id}")
             await _update_task_status(db, session_id, "running", 0)
+            
+            # Send connected event
+            await sse_manager.send_to_task(session_id, "connected", {
+                "session_id": session_id,
+                "conversation_id": conversation_id,
+                "user_id": str(user.id)
+            })
             
             # Process the query with conversation context
             conv_id, user_msg_id, is_new_conv, conn_locked = await conversation_service.process_conversation_query(
@@ -340,10 +460,11 @@ async def _run_conversation_query_processing(
             })
             
             await _update_task_status(db, session_id, "completed", 100)
+            logger.info(f"Query processing completed for session {session_id}")
                 
         except Exception as e:
             error_msg = f"Conversation query processing task failed: {str(e)}"
-            logger.error(error_msg)
+            logger.error(f"Session {session_id} failed: {error_msg}")
             await _update_task_status(db, session_id, "failed", 0, error_msg)
             await sse_manager.send_to_task(session_id, "query_error", {
                 "error": error_msg,

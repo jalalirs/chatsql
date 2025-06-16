@@ -29,6 +29,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   const [connections, setConnections] = useState<Connection[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
   const [justCreatedConversation, setJustCreatedConversation] = useState<string | null>(null);
+  const [loadingMessages, setLoadingMessages] = useState(false);
 
   // Load connections on mount
   useEffect(() => {
@@ -47,21 +48,25 @@ export const ChatMain: React.FC<ChatMainProps> = ({
 
   // Load conversation messages when activeConversation changes
   useEffect(() => {
-    console.log('useEffect triggered - activeConversation:', activeConversation, 'justCreatedConversation:', justCreatedConversation);
+    console.log('🔄 useEffect triggered - activeConversation:', activeConversation, 'justCreatedConversation:', justCreatedConversation);
     
     if (activeConversation && activeConversation !== 'new') {
-      // Don't reload if we just created this conversation (messages are already in state)
-      if (justCreatedConversation === activeConversation) {
-        console.log('✅ Skipping reload for just-created conversation - keeping existing messages');
+      // Only skip loading if this is the EXACT conversation we just created AND it has messages
+      const shouldSkipLoad = justCreatedConversation === activeConversation && messages.length > 0;
+      
+      if (shouldSkipLoad) {
+        console.log('✅ Skipping reload for just-created conversation with existing messages');
         setJustCreatedConversation(null); // Reset the flag
         return;
       }
-      console.log('📥 Loading conversation messages for existing conversation:', activeConversation);
+      
+      console.log('📥 Loading conversation messages for:', activeConversation);
       loadConversationMessages();
     } else if (activeConversation === 'new') {
       console.log('🆕 New conversation state - clearing messages');
       setMessages([]);
       setConversationData(null);
+      setSelectedConnection(null); // Reset connection selection for new conversation
     }
   }, [activeConversation]);
   
@@ -92,8 +97,13 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   const loadConversationMessages = async () => {
     if (!activeConversation || activeConversation === 'new') return;
     
+    setLoadingMessages(true);
+    
     try {
+      console.log('🔍 Loading conversation:', activeConversation);
       const conversationWithMessages = await chatService.getConversationWithMessages(activeConversation);
+      console.log('📨 Loaded conversation data:', conversationWithMessages);
+      
       setConversationData(conversationWithMessages);
       
       // Transform messages to the format expected by ChatMessages component
@@ -112,34 +122,46 @@ export const ChatMain: React.FC<ChatMainProps> = ({
         timestamp: new Date(msg.created_at)
       })) || [];
       
+      console.log('✨ Transformed messages:', transformedMessages);
       setMessages(transformedMessages);
       
       // Set the conversation's connection as selected
       if (conversationWithMessages.connection_id) {
         const connection = connections.find(c => c.id === conversationWithMessages.connection_id);
         if (connection) {
+          console.log('🔗 Setting selected connection:', connection.name);
           setSelectedConnection(connection);
+        } else {
+          console.warn('⚠️ Connection not found for ID:', conversationWithMessages.connection_id);
         }
       }
+      
+      // Clear the just created flag since we're loading a different conversation
+      setJustCreatedConversation(null);
+      
     } catch (error) {
-      console.error('Failed to load conversation messages:', error);
+      console.error('❌ Failed to load conversation messages:', error);
       setMessages([]);
+      setConversationData(null);
+    } finally {
+      setLoadingMessages(false);
     }
   };
 
   const handleConnectionSelect = (connection: Connection) => {
+    console.log('🔗 Connection selected:', connection.name);
     setSelectedConnection(connection);
   };
 
   const handleSendMessage = async (message: string) => {
-    console.log('handleSendMessage called with:', { message, loading, selectedConnection, activeConversation });
+    console.log('💬 handleSendMessage called with:', { message, loading, selectedConnection, activeConversation });
     
     if (!message.trim() || loading || !selectedConnection) {
-      console.log('Aborting send - conditions not met');
+      console.log('❌ Aborting send - conditions not met');
       return;
     }
 
-    console.log('Proceeding with message send...');
+    console.log('✅ Proceeding with message send...');
 
     // For new conversations, create conversation first
     let conversationId = activeConversation;
@@ -147,21 +169,21 @@ export const ChatMain: React.FC<ChatMainProps> = ({
 
     if (!conversationId || conversationId === 'new') {
       try {
-        console.log('Creating new conversation...');
+        console.log('🆕 Creating new conversation...');
         const newConversation = await chatService.createConversation(
           selectedConnection.id,
           message.length > 50 ? message.substring(0, 50) + '...' : message
         );
         conversationId = newConversation.id;
         isNewConversation = true;
-        console.log('New conversation created:', conversationId);
+        console.log('✅ New conversation created:', conversationId);
         
         // Update conversation data
         setConversationData(newConversation);
         setJustCreatedConversation(conversationId);
         onConversationCreated(conversationId);
       } catch (error) {
-        console.error('Failed to create conversation:', error);
+        console.error('❌ Failed to create conversation:', error);
         return;
       }
     }
@@ -181,22 +203,22 @@ export const ChatMain: React.FC<ChatMainProps> = ({
     try {
       // Send query to backend
       const response = await chatService.sendQuery(message, conversationId);
-      console.log('Query response:', response);
+      console.log('📤 Query response:', response);
       
       const aiMessageId = Date.now() + 1;
       
       // Connect to SSE stream from backend
       if (response.session_id && response.stream_url) {
         try {
-          console.log('Setting up EventSource connection...');
+          console.log('🔌 Setting up EventSource connection...');
           const fullStreamUrl = response.stream_url.startsWith('http') 
             ? response.stream_url 
             : `http://localhost:6020${response.stream_url}`;
           
-          console.log('EventSource URL:', fullStreamUrl);
+          console.log('🌐 EventSource URL:', fullStreamUrl);
           
           const eventSource = new EventSource(fullStreamUrl);
-          console.log('EventSource created, readyState:', eventSource.readyState);
+          console.log('📡 EventSource created, readyState:', eventSource.readyState);
           
           let connected = false;
           
@@ -489,11 +511,17 @@ export const ChatMain: React.FC<ChatMainProps> = ({
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto">
-        <ChatMessages 
-          messages={messages} 
-          loading={loading}
-          activeConversation={activeConversation}
-        />
+        {loadingMessages ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-gray-500">Loading conversation...</div>
+          </div>
+        ) : (
+          <ChatMessages 
+            messages={messages} 
+            loading={loading}
+            activeConversation={activeConversation}
+          />
+        )}
       </div>
 
       {/* Input Area */}

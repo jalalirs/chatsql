@@ -31,20 +31,6 @@ class TrainingService:
     def __init__(self):
         self.data_dir = settings.DATA_DIR
         self.openai_client = None
-    
-    async def _load_db_config(self, connection_id: str) -> Optional[Dict[str, Any]]:
-        """Load database configuration from file"""
-        config_path = os.path.join(self.data_dir, "connections", connection_id, "db_config.json")
-        
-        if not os.path.exists(config_path):
-            return None
-        
-        try:
-            with open(config_path, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load db config: {e}")
-            return None
 
     def _get_openai_client(self):
         """Get OpenAI client with configuration"""
@@ -56,9 +42,25 @@ class TrainingService:
             )
         return self.openai_client
     
+    def _build_odbc_connection_string(self, connection: Connection) -> str:
+        """Build ODBC connection string from database connection object"""
+        # Convert boolean values to ODBC format
+        encrypt_str = 'yes' if connection.encrypt else 'no'
+        trust_cert_str = 'yes' if connection.trust_server_certificate else 'no'
+        
+        return (
+            f"DRIVER={connection.driver or 'ODBC Driver 17 for SQL Server'};"
+            f"SERVER={connection.server};"
+            f"DATABASE={connection.database_name};"
+            f"UID={connection.username};"
+            f"PWD={connection.password};"
+            f"Encrypt={encrypt_str};"
+            f"TrustServerCertificate={trust_cert_str};"
+        )
+    
     async def generate_training_data(
         self, 
-        db: AsyncSession, # Passed from connections.py background task
+        db: AsyncSession,
         user: User,
         connection_id: str, 
         num_examples: int,
@@ -67,21 +69,16 @@ class TrainingService:
         """Generate training data for a user's connection"""
         sse_logger = SSELogger(sse_manager, task_id, "data_generation")
         
-        # NOTE: This top-level try-except block is CRITICAL.
-        # It ensures that even if something within _analyze_database_schema,
-        # _generate_examples_with_llm, _save_training_examples, _create_training_documentation,
-        # or _save_training_data_file fails, the final connection status and SSE error
-        # are handled.
         try:
             await sse_logger.info(f"Starting data generation for user {user.email}, connection {connection_id}")
             await sse_logger.progress(5, "Verifying connection ownership...")
             
-            # Verify user owns the connection
+            # Get connection from database (this verifies user ownership)
             connection_response = await connection_service.get_user_connection(db, str(user.id), connection_id)
             if not connection_response:
                 raise ValueError(f"Connection {connection_id} not found or access denied for user {user.email}")
             
-            # Get raw connection for internal operations
+            # Get raw connection object for internal operations
             connection = await connection_service.get_connection_by_id(db, connection_id)
             if not connection:
                 raise ValueError(f"Connection {connection_id} not found")
@@ -91,52 +88,33 @@ class TrainingService:
                 raise ValueError(f"Access denied: Connection does not belong to user {user.email}")
             
             # Update connection status
-            # Important: Ensure this commit is separate or that the entire operation uses one transaction.
-            # For now, let's assume `_update_connection_status` handles its own commit.
             await self._update_connection_status(db, connection_id, ConnectionStatus.GENERATING_DATA)
             
             await sse_logger.progress(10, "Analyzing database schema...")
             
-            # Get database config
-            db_config = await self._load_db_config(connection_id)
-            if not db_config:
-                raise ValueError("Database configuration not found")
-            
-            # Add user context to db_config for logging
-            db_config['connection_id'] = connection_id
-            db_config['user_id'] = str(user.id)
-            db_config['user_email'] = user.email
-            
-            # Analyze schema
-            column_info = await self._analyze_database_schema(db_config, sse_logger, user)
+            # Analyze schema using connection data from database
+            column_info = await self._analyze_database_schema(connection, sse_logger, user)
             
             await sse_logger.progress(20, f"Generating {num_examples} training examples...")
             
             # Generate examples using LLM
             generated_examples = await self._generate_examples_with_llm(
-                db_config, column_info, num_examples, sse_logger, task_id, user
+                connection, column_info, num_examples, sse_logger, task_id, user
             )
             
             await sse_logger.progress(80, "Saving generated examples...")
             
-            # Save examples to database - This part should be transactional with the connection status update
-            # Suggestion: Perform a single `db.commit()` at the very end of generate_training_data
-            # if `_save_training_examples` doesn't commit, and then change _save_training_examples
-            # to not commit internally.
-            
-            # For now, assuming _save_training_examples and _update_connection_status commit,
-            # ensure no unhandled exceptions between these and the final return/send_to_task.
-            
+            # Save examples to database
             await self._save_training_examples(db, connection_id, generated_examples, user)
             
             # Create documentation
             documentation = await self._create_training_documentation(
-                db_config, column_info, connection_id, user
+                connection, column_info, connection_id, user, db
             )
             
             await sse_logger.progress(90, "Saving training data...")
             
-            # Save complete training data
+            # Save complete training data (optional - for backup/export)
             training_data = VannaTrainingData(
                 documentation=documentation,
                 examples=generated_examples
@@ -144,14 +122,12 @@ class TrainingService:
             
             await self._save_training_data_file(connection_id, training_data, user)
             
-            # Update connection status to DATA_GENERATED, this is the final DB commit for the success path
+            # Update connection status to DATA_GENERATED
             await self._update_connection_status(db, connection_id, ConnectionStatus.DATA_GENERATED)
             
             await sse_logger.progress(100, f"Generated {len(generated_examples)} examples successfully")
             await sse_logger.info(f"Data generation completed for user {user.email}")
             
-            # The SSE completion event is sent by `_run_data_generation` in `connections.py`
-            # This service function *returns* the result, which is then used by the caller
             return GeneratedDataResult(
                 success=True,
                 total_generated=len(generated_examples),
@@ -162,25 +138,21 @@ class TrainingService:
             )
             
         except Exception as e:
-            # This outer exception handler is crucial for catching any error
-            # that might prevent the task from completing successfully.
             error_msg = f"Data generation failed for user {user.email}, connection {connection_id}: {str(e)}"
-            logger.error(error_msg, exc_info=True) # Log full traceback
+            logger.error(error_msg, exc_info=True)
             
-            # Update connection status back to test success (or failed if more appropriate)
-            # Ensure this is robust against further errors.
+            # Update connection status back to test success
             try:
                 await self._update_connection_status(db, connection_id, ConnectionStatus.TEST_SUCCESS)
             except Exception as status_update_err:
-                logger.error(f"Failed to update connection status to TEST_SUCCESS after generation error: {status_update_err}")
+                logger.error(f"Failed to update connection status after error: {status_update_err}")
 
-            # Rollback any pending transactions for this session if not already committed
+            # Rollback any pending transactions
             try:
                 await db.rollback()
             except Exception as rollback_err:
-                logger.error(f"Failed to rollback DB session in generate_training_data: {rollback_err}")
+                logger.error(f"Failed to rollback DB session: {rollback_err}")
 
-            # Return a failed result
             return GeneratedDataResult(
                 success=False,
                 total_generated=0,
@@ -193,28 +165,22 @@ class TrainingService:
     
     async def _analyze_database_schema(
         self, 
-        db_config: Dict[str, Any], 
+        connection: Connection,
         sse_logger: SSELogger,
         user: User
     ) -> Dict[str, Any]:
-        """Analyze database schema (with user context)"""
+        """Analyze database schema using connection from database"""
         await sse_logger.info(f"Connecting to database for schema analysis (user: {user.email})...")
-        driver = db_config.get('driver', 'ODBC Driver 17 for SQL Server')
-        conn_str = (
-            f"DRIVER={driver};"
-            f"SERVER={db_config['server']};"
-            f"DATABASE={db_config['database_name']};"
-            f"UID={db_config['username']};"
-            f"PWD={db_config['password']};"
-            f"TrustServerCertificate=yes"
-        )
+        
+        # Build connection string from database connection object
+        conn_str = self._build_odbc_connection_string(connection)
         
         try:
             cnxn = pyodbc.connect(conn_str)
             cursor = cnxn.cursor()
             
             # Parse table name
-            full_table_name = db_config['table_name']
+            full_table_name = connection.table_name
             if '.' in full_table_name:
                 table_schema, table_name_only = full_table_name.split('.', 1)
             else:
@@ -298,18 +264,18 @@ class TrainingService:
     
     async def _generate_examples_with_llm(
         self, 
-        db_config: Dict[str, Any], 
+        connection: Connection,
         column_info: Dict[str, Any], 
         num_examples: int,
         sse_logger: SSELogger,
         task_id: str,
         user: User
     ) -> List[VannaTrainingExample]:
-        """Generate training examples using LLM (with user context)"""
+        """Generate training examples using LLM"""
         
         client = self._get_openai_client()
-        table_name = db_config['table_name']
-        connection_id = db_config.get('connection_id', '')
+        table_name = connection.table_name
+        connection_id = str(connection.id)
         
         # Create column details for prompt
         column_details = []
@@ -391,7 +357,7 @@ Always output only the JSON object and nothing else.
                     )
                     generated_examples.append(example)
                     
-                    # Send real-time update with the new example and user context
+                    # Send real-time update with the new example
                     await sse_manager.send_to_task(task_id, "example_generated", {
                         "example_number": i + 1,
                         "total_examples": num_examples,
@@ -423,12 +389,13 @@ Always output only the JSON object and nothing else.
     
     async def _create_training_documentation(
         self, 
-        db_config: Dict[str, Any], 
+        connection: Connection,
         column_info: Dict[str, Any],
         connection_id: str,
-        user: User
+        user: User,
+        db: AsyncSession
     ) -> List[TrainingDocumentation]:
-        """Create training documentation entries (with user context)"""
+        """Create training documentation entries using database data"""
         documentation = []
         
         logger.info(f"Creating training documentation for user {user.email}, connection {connection_id}")
@@ -442,7 +409,7 @@ Always output only the JSON object and nothing else.
         # Table info
         documentation.append(TrainingDocumentation(
             doc_type="table_info",
-            content=f"I only have one table which is {db_config['table_name']}"
+            content=f"I only have one table which is {connection.table_name}"
         ))
         
         # Column-specific documentation
@@ -472,23 +439,26 @@ Always output only the JSON object and nothing else.
                     content="For the 'View' column, always use [View] when creating the SQL query as 'VIEW' is a reserved keyword in SQL Server."
                 ))
         
-        # Load column descriptions from database if available
+        # Load column descriptions from database
         try:
-            connection_dir = os.path.join(self.data_dir, "connections", connection_id)
-            csv_path = os.path.join(connection_dir, "column_descriptions.csv")
+            from sqlalchemy import select
+            from app.models.database import ColumnDescription
             
-            if os.path.exists(csv_path):
-                import csv
-                with open(csv_path, 'r') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        if row.get('column') and row.get('description'):
-                            documentation.append(TrainingDocumentation(
-                                doc_type=f"column_description_{row['column']}",
-                                content=f"Column Name: {row['column']}, Column Description: {row['description']}"
-                            ))
+            stmt = select(ColumnDescription).where(
+                ColumnDescription.connection_id == uuid.UUID(connection_id)
+            )
+            result = await db.execute(stmt)
+            column_descriptions = result.scalars().all()
+            
+            for col_desc in column_descriptions:
+                if col_desc.description:
+                    documentation.append(TrainingDocumentation(
+                        doc_type=f"column_description_{col_desc.column_name}",
+                        content=f"Column Name: {col_desc.column_name}, Column Description: {col_desc.description}"
+                    ))
+                    
         except Exception as e:
-            logger.warning(f"Could not load column descriptions for user {user.email}: {e}")
+            logger.warning(f"Could not load column descriptions from database for user {user.email}: {e}")
         
         return documentation
     
@@ -499,7 +469,7 @@ Always output only the JSON object and nothing else.
         examples: List[VannaTrainingExample],
         user: User
     ):
-        """Save training examples to database (with user context)"""
+        """Save training examples to database"""
         connection_uuid = uuid.UUID(connection_id)
         
         logger.info(f"Saving {len(examples)} training examples for user {user.email}, connection {connection_id}")
@@ -531,7 +501,7 @@ Always output only the JSON object and nothing else.
         training_data: VannaTrainingData,
         user: User
     ):
-        """Save training data to JSON file (with user context)"""
+        """Save training data to JSON file for backup/export purposes"""
         connection_dir = os.path.join(self.data_dir, "connections", connection_id)
         os.makedirs(connection_dir, exist_ok=True)
         
@@ -556,7 +526,7 @@ Always output only the JSON object and nothing else.
         with open(output_file, 'w') as f:
             json.dump(data_dict, f, indent=2)
         
-        logger.info(f"Saved training data to {output_file} for user {user.email}")
+        logger.info(f"Saved training data backup to {output_file} for user {user.email}")
     
     async def _update_connection_status(self, db: AsyncSession, connection_id: str, status: ConnectionStatus):
         """Update connection status"""
@@ -578,7 +548,7 @@ Always output only the JSON object and nothing else.
         user: User, 
         connection_id: str
     ) -> Optional[Dict[str, Any]]:
-        """Get training data for a user's connection"""
+        """Get training data for a user's connection from database"""
         try:
             # Verify user owns the connection
             connection_response = await connection_service.get_user_connection(db, str(user.id), connection_id)
@@ -586,19 +556,41 @@ Always output only the JSON object and nothing else.
                 logger.warning(f"Training data access denied for user {user.email}, connection {connection_id}")
                 return None
             
-            # Load training data file
-            connection_dir = os.path.join(self.data_dir, "connections", connection_id)
-            training_file = os.path.join(connection_dir, "generated_training_data.json")
+            # Get training examples from database
+            from sqlalchemy import select
+            connection_uuid = uuid.UUID(connection_id)
             
-            if not os.path.exists(training_file):
-                return None
+            stmt = select(TrainingExample).where(TrainingExample.connection_id == connection_uuid)
+            result = await db.execute(stmt)
+            examples = result.scalars().all()
             
-            with open(training_file, 'r') as f:
-                training_data = json.load(f)
+            # Get column descriptions from database
+            from app.models.database import ColumnDescription
+            stmt = select(ColumnDescription).where(ColumnDescription.connection_id == connection_uuid)
+            result = await db.execute(stmt)
+            column_descriptions = result.scalars().all()
             
-            # Add connection info
-            training_data['connection_name'] = connection_response.name
-            training_data['connection_status'] = connection_response.status
+            training_data = {
+                "user_id": str(user.id),
+                "user_email": user.email,
+                "connection_id": connection_id,
+                "connection_name": connection_response.name,
+                "connection_status": connection_response.status,
+                "examples": [
+                    {"question": ex.question, "sql": ex.sql}
+                    for ex in examples
+                ],
+                "column_descriptions": [
+                    {
+                        "column_name": col.column_name,
+                        "description": col.description,
+                        "data_type": col.data_type,
+                        "variable_range": col.variable_range
+                    }
+                    for col in column_descriptions
+                ],
+                "total_examples": len(examples)
+            }
             
             return training_data
             
@@ -639,13 +631,13 @@ Always output only the JSON object and nothing else.
             await db.execute(update_stmt)
             await db.commit()
             
-            # Delete training data files
+            # Optionally delete backup file if it exists
             connection_dir = os.path.join(self.data_dir, "connections", connection_id)
             training_file = os.path.join(connection_dir, "generated_training_data.json")
             
             if os.path.exists(training_file):
                 os.remove(training_file)
-                logger.info(f"Deleted training data file for user {user.email}, connection {connection_id}")
+                logger.info(f"Deleted training data backup file for user {user.email}, connection {connection_id}")
             
             return True
             

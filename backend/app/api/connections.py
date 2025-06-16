@@ -130,6 +130,8 @@ async def create_connection(
     password: str = Form(...),
     table_name: str = Form(...),
     driver: Optional[str] = Form(None),
+    encrypt: Optional[bool] = Form(False),  # NEW: Encrypt connection
+    trust_server_certificate: Optional[bool] = Form(True),  # NEW: Trust server certificate
     column_descriptions_file: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -155,7 +157,9 @@ async def create_connection(
             username=username,
             password=password,
             table_name=table_name,
-            driver=driver
+            driver=driver,
+            encrypt=encrypt,  # Use new encrypt field
+            trust_server_certificate=trust_server_certificate  # Use new trust_server_certificate field
         )
         
         # Validate connection data
@@ -539,7 +543,9 @@ async def _run_schema_refresh(
             username=connection.username,
             password=connection.password,
             table_name=connection.table_name,
-            driver=connection.driver
+            driver=connection.driver,
+            encrypt=connection.encrypt,  # Use new encrypt field
+            trust_server_certificate=connection.trust_server_certificate  # Use new trust_server_certificate field
         )
         
         # Run schema refresh
@@ -877,7 +883,9 @@ async def _run_model_training(
             username=connection.username,
             password=connection.password,
             table_name=connection.table_name,
-            driver=connection.driver or "ODBC Driver 17 for SQL Server"
+            driver=connection.driver or "ODBC Driver 17 for SQL Server",
+            encrypt=connection.encrypt,
+            trust_server_certificate=connection.trust_server_certificate
         )
         
         # Progress callback for SSE updates

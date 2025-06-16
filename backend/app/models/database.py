@@ -152,6 +152,8 @@ class Connection(Base):
     password = Column(Text, nullable=False)  # Will be encrypted
     table_name = Column(String(255), nullable=False)
     driver = Column(String(200), nullable=True)
+    encrypt = Column(Boolean, default=False)  # NEW: Encrypt connection
+    trust_server_certificate = Column(Boolean, default=True)  # NEW: Trust server certificate
     
     status = Column(connection_status_enum, default=ConnectionStatus.TESTING)
     

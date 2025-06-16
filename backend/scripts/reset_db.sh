@@ -18,6 +18,9 @@ POSTGRES_CONTAINER="tex2sql_postgres"
 DATABASE_NAME="tex2sql"
 POSTGRES_USER="postgres"
 
+# Expected columns in connections table
+EXPECTED_COLUMNS=("driver" "encrypt" "trust_server_certificate")
+
 # Function to print colored messages
 print_message() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -221,19 +224,45 @@ run_alembic_migrations() {
 verify_database() {
     print_message "Verifying database setup..."
     
-    # Check if connections table exists and has driver column
+    # Check if connections table exists
     if docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$DATABASE_NAME" -c "\d connections" > /dev/null 2>&1; then
         print_success "Connections table exists"
         
-        # Check for driver column
-        if docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$DATABASE_NAME" -c "\d connections" | grep -q "driver"; then
-            print_success "Driver column found in connections table"
-        else
-            print_warning "Driver column not found in connections table"
-        fi
+        # Check for all expected columns
+        for column in "${EXPECTED_COLUMNS[@]}"; do
+            if docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$DATABASE_NAME" -c "\d connections" | grep -q "$column"; then
+                print_success "Column '$column' found in connections table"
+            else
+                print_error "Column '$column' NOT found in connections table"
+                print_warning "You may need to create a new migration for this column"
+            fi
+        done
+        
+        # Show table structure
+        print_message "Current connections table structure:"
+        docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$DATABASE_NAME" -c "\d connections"
+        
     else
         print_warning "Connections table not found"
         print_message "This is expected if using Alembic - tables will be created by migrations"
+    fi
+}
+
+# Function to create missing columns migration
+create_missing_columns_migration() {
+    print_message "Creating migration for missing columns..."
+    if alembic revision --autogenerate -m "Add encrypt and trust_server_certificate columns"; then
+        print_success "Migration created for missing columns"
+        print_message "Running the new migration..."
+        if alembic upgrade head; then
+            print_success "Missing columns migration applied successfully"
+        else
+            print_error "Failed to apply missing columns migration"
+            exit 1
+        fi
+    else
+        print_error "Failed to create migration for missing columns"
+        exit 1
     fi
 }
 
@@ -248,6 +277,9 @@ show_database_info() {
     echo ""
     print_message "To connect manually:"
     echo "  docker exec -it $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d $DATABASE_NAME"
+    echo ""
+    print_message "To check table structure:"
+    echo "  docker exec -it $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d $DATABASE_NAME -c '\\d connections'"
 }
 
 # Function to show help
@@ -257,10 +289,11 @@ show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --backup          Create a backup before resetting"
-    echo "  --force           Skip confirmation prompt"
-    echo "  --no-migrations   Skip running Alembic migrations"
-    echo "  --help            Show this help message"
+    echo "  --backup              Create a backup before resetting"
+    echo "  --force               Skip confirmation prompt"
+    echo "  --no-migrations       Skip running Alembic migrations"
+    echo "  --fix-missing-columns Create migration for missing columns only"
+    echo "  --help                Show this help message"
     echo ""
     echo "This script will:"
     echo "  1. Stop all Docker containers"
@@ -269,6 +302,35 @@ show_help() {
     echo "  4. Run Alembic migrations to create schema"
     echo "  5. Verify the database is working"
     echo ""
+}
+
+# Function to fix missing columns without full reset
+fix_missing_columns_only() {
+    print_message "Fixing missing columns without full reset..."
+    
+    # Pre-flight checks
+    check_docker
+    check_compose_file
+    
+    # Make sure containers are running
+    if ! docker ps --format "table {{.Names}}" | grep -q "$POSTGRES_CONTAINER"; then
+        print_message "Starting containers..."
+        start_containers
+        wait_for_database
+    fi
+    
+    # Check if alembic is available
+    if ! command -v alembic &> /dev/null; then
+        print_error "Alembic not found. Please install it: pip install alembic"
+        exit 1
+    fi
+    
+    create_missing_columns_migration
+    verify_database
+    show_database_info
+    
+    print_success "Missing columns have been added successfully!"
+    exit 0
 }
 
 # Main function
@@ -282,6 +344,7 @@ main() {
     BACKUP=false
     FORCE=false
     NO_MIGRATIONS=false
+    FIX_MISSING_COLUMNS_ONLY=false
     
     for arg in "$@"; do
         case $arg in
@@ -294,6 +357,9 @@ main() {
             --no-migrations)
                 NO_MIGRATIONS=true
                 ;;
+            --fix-missing-columns)
+                FIX_MISSING_COLUMNS_ONLY=true
+                ;;
             --help)
                 show_help
                 exit 0
@@ -305,6 +371,11 @@ main() {
                 ;;
         esac
     done
+    
+    # Handle fix missing columns option
+    if [ "$FIX_MISSING_COLUMNS_ONLY" = true ]; then
+        fix_missing_columns_only
+    fi
     
     # Pre-flight checks
     check_docker
@@ -320,6 +391,7 @@ main() {
         echo ""
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             print_message "Operation cancelled."
+            print_message "Tip: Use --fix-missing-columns to add missing columns without resetting"
             exit 0
         fi
     fi
@@ -361,7 +433,7 @@ main() {
     echo ""
     
     print_success "Database reset completed successfully!"
-    print_message "Your database is now ready with a fresh schema including the driver column."
+    print_message "Your database is now ready with a fresh schema including all required columns."
 }
 
 # Run main function with all arguments

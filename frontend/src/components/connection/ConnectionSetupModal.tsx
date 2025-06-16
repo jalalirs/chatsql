@@ -17,6 +17,8 @@ interface ConnectionFormData {
   password: string;
   table_name: string;
   driver: string;
+  encrypt: boolean;
+  trust_server_certificate: boolean;
 }
 
 interface TestResult {
@@ -38,7 +40,9 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
     username: 'sa',
     password: 'l.messi10',
     table_name: 'Employees',
-    driver: 'ODBC Driver 18 for SQL Server'
+    driver: 'ODBC Driver 18 for SQL Server',
+    encrypt: true,
+    trust_server_certificate: false
   });
 
   const [testResult, setTestResult] = useState<TestResult | null>(null);
@@ -47,7 +51,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleInputChange = (field: keyof ConnectionFormData, value: string) => {
+  const handleInputChange = (field: keyof ConnectionFormData, value: string | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     // Clear test results when form changes
     if (testResult) {
@@ -74,7 +78,9 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
           username: formData.username,
           password: formData.password,
           table_name: formData.table_name,
-          driver: formData.driver
+          driver: formData.driver,
+          encrypt: formData.encrypt,
+          trust_server_certificate: formData.trust_server_certificate
         }
       });
   
@@ -284,6 +290,8 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
       formDataToSend.append('password', formData.password);
       formDataToSend.append('table_name', formData.table_name);
       formDataToSend.append('driver', formData.driver);
+      formDataToSend.append('encrypt', formData.encrypt.toString());
+      formDataToSend.append('trust_server_certificate', formData.trust_server_certificate.toString());
   
       console.log('🔍 Creating connection with FormData:');
       // Use Array.from to fix TypeScript iteration issue
@@ -320,7 +328,9 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
       username: 'sa',
       password: 'l.messi10',
       table_name: 'Employees',
-      driver: 'ODBC Driver 18 for SQL Server'
+      driver: 'ODBC Driver 18 for SQL Server',
+      encrypt: true,
+      trust_server_certificate: false
     });
     setTestResult(null);
     setTesting(false);
@@ -440,6 +450,41 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
                 <option value="ODBC Driver 18 for SQL Server">ODBC Driver 18 for SQL Server</option>
                 <option value="SQL Server Native Client 11.0">SQL Server Native Client 11.0</option>
               </select>
+            </div>
+
+            {/* Security Options */}
+            <div className="border-t pt-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Security Options</h3>
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.encrypt}
+                      onChange={(e) => handleInputChange('encrypt', e.target.checked)}
+                      className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-700">Encrypt Connection</span>
+                      <p className="text-xs text-gray-500">Enable SSL/TLS encryption for the connection</p>
+                    </div>
+                  </label>
+                </div>
+                <div>
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.trust_server_certificate}
+                      onChange={(e) => handleInputChange('trust_server_certificate', e.target.checked)}
+                      className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-700">Trust Server Certificate</span>
+                      <p className="text-xs text-gray-500">Skip server certificate validation (use with caution)</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 

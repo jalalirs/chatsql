@@ -145,6 +145,8 @@ class ConnectionCreate(BaseModel):
     password: str = Field(..., min_length=1, description="Database password")
     table_name: str = Field(..., min_length=1, description="Full table name (schema.table)")
     driver: Optional[str] = Field(None, description="Database driver")
+    encrypt: Optional[bool] = Field(False, description="Whether to encrypt the connection")
+    trust_server_certificate: Optional[bool] = Field(True, description="Whether to trust server certificate")
 
 class ConnectionTestRequest(BaseModel):
     connection_data: ConnectionCreate
@@ -163,6 +165,8 @@ class ConnectionResponse(BaseModel):
     database_name: str
     table_name: str
     driver: Optional[str] = None
+    encrypt: bool = False
+    trust_server_certificate: bool = True
     status: ConnectionStatus
     test_successful: bool
     column_descriptions_uploaded: bool
