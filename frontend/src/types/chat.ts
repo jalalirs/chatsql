@@ -1,19 +1,22 @@
 export interface Connection {
-    id: string;
-    name: string;
-    server: string;
-    database_name: string;
-    table_name: string;
-    driver?: string;
-    status: 'testing' | 'test_success' | 'test_failed' | 'generating_data' | 'data_generated' | 'training' | 'trained' | 'training_failed';
-    test_successful: boolean;
-    column_descriptions_uploaded: boolean;
-    generated_examples_count: number;
-    total_queries: number;
-    last_queried_at?: string;
-    created_at: string;
-    trained_at?: string;
-  }
+  id: string;
+  name: string;
+  server: string;
+  database_name: string;
+  username: string;  // ADD THIS
+  table_name: string;
+  driver?: string;
+  encrypt: boolean;  // ADD THIS
+  trust_server_certificate: boolean;  // ADD THIS
+  status: 'testing' | 'test_success' | 'test_failed' | 'generating_data' | 'data_generated' | 'training' | 'trained' | 'training_failed';
+  test_successful: boolean;
+  column_descriptions_uploaded: boolean;
+  generated_examples_count: number;
+  total_queries: number;
+  last_queried_at?: string;
+  created_at: string;
+  trained_at?: string;
+}
   
   export interface Conversation {
     id: string;

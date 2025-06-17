@@ -305,77 +305,105 @@ class VannaService:
         progress_callback: Optional[callable] = None,
         user: Optional[User] = None
     ):
-        """Train Vanna instance with generated data"""
+        """Train Vanna instance with database training data"""
         
         user_info = f" for user {user.email}" if user else ""
         
-        # Load training data
-        training_data_path = os.path.join(
-            self.data_dir, "connections", connection_id, "generated_training_data.json"
-        )
-        
-        if not os.path.exists(training_data_path):
-            raise FileNotFoundError(f"Training data not found for connection {connection_id}. Please generate data first.")
-        
         if progress_callback:
-            await progress_callback(35, "Loading training data...")
+            await progress_callback(35, "Loading training data from database...")
         
         try:
-            with open(training_data_path, 'r') as f:
-                training_data = json.load(f)
+            # Import here to avoid circular imports
+            from app.services.training_service import training_service
+            from app.core.database import get_db
+            
+            # Get database session
+            async for db in get_db():
+                try:
+                    # Load training data from database
+                    documentation = await training_service.get_training_documentation(db, connection_id)
+                    questions = await training_service.get_training_questions(db, connection_id)
+                    columns = await training_service.get_training_columns(db, connection_id)
+                    break  # Exit the async for loop
+                except Exception as e:
+                    logger.error(f"Failed to get database session: {e}")
+                    raise
+        
         except Exception as e:
-            raise ValueError(f"Failed to load training data: {e}")
+            logger.error(f"Failed to load training data from database{user_info}: {e}")
+            if progress_callback:
+                await progress_callback(95, "Failed to load training data")
+            return
         
-        documentation = training_data.get('documentation', [])
-        examples = training_data.get('examples', [])
+        total_items = len(documentation) + len(questions) + len(columns)
         
-        logger.info(f"Training Vanna with {len(documentation)} docs and {len(examples)} examples for connection {connection_id}{user_info}")
+        if total_items == 0:
+            logger.warning(f"No training data found for connection {connection_id}{user_info}")
+            if progress_callback:
+                await progress_callback(95, "No training data found - using schema only")
+            return
         
-        total_items = len(documentation) + len(examples)
+        logger.info(f"Training Vanna with {len(documentation)} docs, {len(questions)} questions, and {len(columns)} column schemas{user_info}")
+        
         current_item = 0
         
         if progress_callback:
             await progress_callback(40, f"Training with {len(documentation)} documentation entries...")
         
         # Train with documentation
-        for doc_entry in documentation:
-            content = doc_entry.get('content')
-            if content:
-                try:
+        for doc in documentation:
+            try:
+                vanna_instance.train(documentation=doc.content)
+                current_item += 1
+                progress = 40 + int((current_item / total_items) * 40)
+                if progress_callback:
+                    await progress_callback(progress, f"Training documentation: {doc.title}")
+            except Exception as e:
+                logger.error(f"Failed to train documentation entry {doc.title}: {e}")
+                current_item += 1
+                continue
+        
+        if progress_callback:
+            await progress_callback(65, f"Training with {len(columns)} column schemas...")
+        
+        # Train with column schemas (enhanced documentation)
+        for column in columns:
+            try:
+                if column.description:
+                    content = f"Column '{column.column_name}' ({column.data_type}): {column.description}"
+                    if column.value_range:
+                        content += f" | Value range: {column.value_range}"
                     vanna_instance.train(documentation=content)
                     current_item += 1
                     progress = 40 + int((current_item / total_items) * 40)
                     if progress_callback:
-                        await progress_callback(progress, f"Training documentation: {doc_entry.get('doc_type', 'unknown')}")
-                except Exception as e:
-                    logger.error(f"Failed to train documentation entry: {e}")
-                    current_item += 1
-                    continue
+                        await progress_callback(progress, f"Training column schema: {column.column_name}")
+            except Exception as e:
+                logger.error(f"Failed to train column schema {column.column_name}: {e}")
+                current_item += 1
+                continue
         
         if progress_callback:
-            await progress_callback(80, f"Training with {len(examples)} examples...")
+            await progress_callback(80, f"Training with {len(questions)} question-SQL pairs...")
         
-        # Train with examples
-        for example_entry in examples:
-            question = example_entry.get('question')
-            sql = example_entry.get('sql')
-            if question and sql:
-                try:
-                    vanna_instance.train(question=question, sql=sql)
-                    current_item += 1
-                    progress = 40 + int((current_item / total_items) * 40)
-                    if progress_callback:
-                        await progress_callback(progress, f"Training example: {question[:50]}...")
-                except Exception as e:
-                    logger.error(f"Failed to train example: {e}")
-                    current_item += 1
-                    continue
+        # Train with question-SQL pairs
+        for question in questions:
+            try:
+                vanna_instance.train(question=question.question, sql=question.sql)
+                current_item += 1
+                progress = 40 + int((current_item / total_items) * 40)
+                if progress_callback:
+                    await progress_callback(progress, f"Training example: {question.question[:50]}...")
+            except Exception as e:
+                logger.error(f"Failed to train question-SQL pair: {e}")
+                current_item += 1
+                continue
         
         if progress_callback:
             await progress_callback(95, "Training completed, saving model...")
         
         logger.info(f"Vanna training completed for connection {connection_id}{user_info}")
-    
+  
     def create_vanna_instance(
         self, 
         connection_id: str, 

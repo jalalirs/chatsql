@@ -101,6 +101,8 @@ export class SSEConnection {
     addListener('training_completed', createCompletionListener('training_completed'));
     addListener('query_completed', createCompletionListener('query_completed'));
     addListener('schema_refresh_completed', createCompletionListener('schema_refresh_completed'));
+    addListener('test_completed', createCompletionListener('test_completed'));
+    addListener('generation_completed', createCompletionListener('generation_completed'));
 
     addListener('data_generation_error', createErrorListener('data_generation_error'));
     addListener('training_error', createErrorListener('training_error'));

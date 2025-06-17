@@ -24,6 +24,9 @@ class TaskType(str, Enum):
     GENERATE_DATA = "generate_data"
     TRAIN_MODEL = "train_model"
     QUERY = "query"
+    REFRESH_SCHEMA = "refresh_schema"  
+    GENERATE_COLUMN_DESCRIPTIONS = "generate_column_descriptions"  
+
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -424,6 +427,172 @@ class ConnectionAddRequest(BaseModel):
 
 class TrainModelRequest(BaseModel):
     connection_id: str = Field(..., description="Connection UUID to train")
+
+
+# ========================
+# TRAINING DATA SCHEMAS
+# ========================
+
+class TrainingDocumentationCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    doc_type: str = Field(..., min_length=1, max_length=100)
+    content: str = Field(..., min_length=1)
+    category: Optional[str] = Field(None, max_length=100)
+    order_index: int = Field(default=0, ge=0)
+
+class TrainingDocumentationUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    doc_type: Optional[str] = Field(None, min_length=1, max_length=100)
+    content: Optional[str] = Field(None, min_length=1)
+    category: Optional[str] = Field(None, max_length=100)
+    order_index: Optional[int] = Field(None, ge=0)
+    is_active: Optional[bool] = None
+
+class TrainingDocumentationResponse(BaseModel):
+    id: str
+    connection_id: str
+    title: str
+    doc_type: str
+    content: str
+    category: Optional[str] = None
+    order_index: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class TrainingQuestionSqlCreate(BaseModel):
+    question: str = Field(..., min_length=1)
+    sql: str = Field(..., min_length=1)
+    generated_by: str = Field(default="manual", max_length=50)
+    generation_model: Optional[str] = Field(None, max_length=100)
+    is_validated: bool = Field(default=False)
+    validation_notes: Optional[str] = None
+
+class TrainingQuestionSqlUpdate(BaseModel):
+    question: Optional[str] = Field(None, min_length=1)
+    sql: Optional[str] = Field(None, min_length=1)
+    generated_by: Optional[str] = Field(None, max_length=50)
+    generation_model: Optional[str] = Field(None, max_length=100)
+    is_validated: Optional[bool] = None
+    validation_notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class TrainingQuestionSqlResponse(BaseModel):
+    id: str
+    connection_id: str
+    question: str
+    sql: str
+    generated_by: str
+    generation_model: Optional[str] = None
+    is_validated: bool
+    validation_notes: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class TrainingColumnSchemaCreate(BaseModel):
+    column_name: str = Field(..., min_length=1, max_length=255)
+    data_type: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
+    value_range: Optional[str] = None
+    description_source: str = Field(default="manual", max_length=50)
+
+class TrainingColumnSchemaUpdate(BaseModel):
+    column_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    data_type: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = None
+    value_range: Optional[str] = None
+    description_source: Optional[str] = Field(None, max_length=50)
+    is_active: Optional[bool] = None
+
+class TrainingColumnSchemaResponse(BaseModel):
+    id: str
+    connection_id: str
+    column_name: str
+    data_type: str
+    description: Optional[str] = None
+    value_range: Optional[str] = None
+    description_source: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# ========================
+# TRAINING DATA LIST RESPONSES
+# ========================
+
+class TrainingDocumentationListResponse(BaseModel):
+    documentation: List[TrainingDocumentationResponse]
+    total: int
+    connection_id: str
+
+class TrainingQuestionSqlListResponse(BaseModel):
+    questions: List[TrainingQuestionSqlResponse]
+    total: int
+    connection_id: str
+
+class TrainingColumnSchemaListResponse(BaseModel):
+    columns: List[TrainingColumnSchemaResponse]
+    total: int
+    connection_id: str
+
+# ========================
+# BULK OPERATIONS
+# ========================
+
+class TrainingDocumentationBulkCreate(BaseModel):
+    documentation: List[TrainingDocumentationCreate]
+
+class TrainingQuestionSqlBulkCreate(BaseModel):
+    questions: List[TrainingQuestionSqlCreate]
+
+class TrainingColumnSchemaBulkCreate(BaseModel):
+    columns: List[TrainingColumnSchemaCreate]
+
+# ========================
+# GENERATION REQUESTS
+# ========================
+
+class GenerateColumnDescriptionsRequest(BaseModel):
+    use_ai: bool = Field(default=True)
+    overwrite_existing: bool = Field(default=True)
+
+class GenerateDocumentationRequest(BaseModel):
+    doc_types: List[str] = Field(default=["mssql_conventions", "table_info"])
+    overwrite_existing: bool = Field(default=False)
+
+# ========================
+# UPDATED TRAINING DATA VIEW
+# ========================
+
+class TrainingDataViewResponse(BaseModel):
+    connection_id: str
+    connection_name: str
+    documentation: List[TrainingDocumentationResponse]
+    question_sql_pairs: List[TrainingQuestionSqlResponse]
+    column_schema: List[TrainingColumnSchemaResponse]
+    total_documentation: int
+    total_questions: int
+    total_columns: int
+
+# ========================
+# DELETE RESPONSES
+# ========================
+
+class TrainingItemDeleteResponse(BaseModel):
+    success: bool
+    message: str
+    item_id: str
+    item_type: str  # "documentation", "question_sql", "column_schema"
 
 
 # ========================

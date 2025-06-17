@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Database, ArrowLeft, MoreVertical, Play, Zap, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Plus, Database, ArrowLeft, MoreVertical, Play, Zap, AlertCircle, CheckCircle, Clock, Trash2 } from 'lucide-react';
 import { Connection } from '../types/chat';
 import { chatService } from '../services/chat';
 import { ConnectionSetupModal } from '../components/connection/ConnectionSetupModal';
+import { api } from '../services/auth';
 
 export const ConnectionsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -11,6 +12,8 @@ export const ConnectionsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showActions, setShowActions] = useState<string | null>(null);
   const [showSetupModal, setShowSetupModal] = useState(false);
+  const [deletingConnection, setDeletingConnection] = useState<Connection | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     loadConnections();
@@ -41,6 +44,32 @@ export const ConnectionsPage: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const handleDeleteConnection = async () => {
+    if (!deletingConnection) return;
+    
+    setDeleteLoading(true);
+    try {
+      console.log('Deleting connection:', deletingConnection.id);
+      
+      const response = await api.delete(`/connections/${deletingConnection.id}`);
+      console.log('Delete response:', response.data);
+      
+      // Remove from local state
+      setConnections(prev => prev.filter(conn => conn.id !== deletingConnection.id));
+      
+      // Show success message (optional)
+      console.log(`Connection "${deletingConnection.name}" deleted successfully`);
+      
+    } catch (error: any) {
+      console.error('Failed to delete connection:', error);
+      alert(`Failed to delete connection: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setDeleteLoading(false);
+      setDeletingConnection(null);
+    }
+  };
+  
   const getStatusInfo = (status: string) => {
     switch (status) {
       case 'trained':
@@ -136,7 +165,10 @@ export const ConnectionsPage: React.FC = () => {
         // TODO: Start retraining
         break;
       case 'delete':
-        // TODO: Delete connection
+        const connection = connections.find(conn => conn.id === connectionId);
+        if (connection) {
+          setDeletingConnection(connection);
+        }
         break;
     }
   };
@@ -324,6 +356,65 @@ export const ConnectionsPage: React.FC = () => {
           className="fixed inset-0 z-5" 
           onClick={() => setShowActions(null)}
         />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingConnection && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+                <Trash2 size={20} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-medium text-gray-900">Delete Connection</h3>
+                <p className="text-sm text-gray-500">This action cannot be undone</p>
+              </div>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-gray-700">
+                Are you sure you want to delete the connection <strong>"{deletingConnection.name}"</strong>?
+              </p>
+              <p className="text-sm text-gray-600 mt-2">
+                This will permanently delete:
+              </p>
+              <ul className="text-sm text-gray-600 mt-1 ml-4 list-disc">
+                <li>The database connection</li>
+                <li>All training data and documentation</li>
+                <li>All conversation history</li>
+                <li>The trained AI model</li>
+              </ul>
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={handleDeleteConnection}
+                disabled={deleteLoading}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+              >
+                {deleteLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    Delete
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => setDeletingConnection(null)}
+                disabled={deleteLoading}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Connection Setup Modal */}

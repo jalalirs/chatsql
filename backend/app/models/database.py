@@ -22,7 +22,7 @@ task_status_enum = ENUM(
 )
 
 task_type_enum = ENUM(
-    'test_connection', 'generate_data', 'train_model', 'query',
+    'test_connection', 'generate_data', 'train_model', 'query', 'refresh_schema', 'generate_column_descriptions',
     name='task_type'
 )
 
@@ -185,6 +185,9 @@ class Connection(Base):
     # Relationships
     user = relationship("User", back_populates="connections")
     conversations = relationship("Conversation", back_populates="connection", cascade="all, delete-orphan")
+    training_documentation = relationship("TrainingDocumentation", back_populates="connection", cascade="all, delete-orphan")
+    training_question_sql = relationship("TrainingQuestionSql", back_populates="connection", cascade="all, delete-orphan")  
+    training_column_schema = relationship("TrainingColumnSchema", back_populates="connection", cascade="all, delete-orphan")
     
     # Add composite unique constraint for user_id + name
     __table_args__ = (
@@ -282,3 +285,101 @@ class PasswordResetToken(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+# Add these new classes to models/database.py
+
+class TrainingDocumentation(Base):
+    __tablename__ = "training_documentation"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connection_id = Column(UUID(as_uuid=True), ForeignKey("connections.id"), nullable=False, index=True)
+    
+    # Documentation details
+    title = Column(String(255), nullable=False)
+    doc_type = Column(String(100), nullable=False)  # e.g., "general", "mssql_conventions", "table_info"
+    content = Column(Text, nullable=False)
+    
+    # Ordering and categorization
+    category = Column(String(100), nullable=True)  # For grouping docs
+    order_index = Column(Integer, default=0)  # For ordering within category
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationship
+    connection = relationship("Connection", back_populates="training_documentation")
+
+
+class TrainingQuestionSql(Base):
+    __tablename__ = "training_question_sql"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connection_id = Column(UUID(as_uuid=True), ForeignKey("connections.id"), nullable=False, index=True)
+    
+    # Question-SQL pair
+    question = Column(Text, nullable=False)
+    sql = Column(Text, nullable=False)
+    
+    # Generation info
+    generated_by = Column(String(50), default="ai")  # "ai", "manual", "imported"
+    generation_model = Column(String(100), nullable=True)  # Which AI model generated it
+    
+    # Quality and validation
+    is_validated = Column(Boolean, default=False)  # Has been manually reviewed
+    validation_notes = Column(Text, nullable=True)
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationship
+    connection = relationship("Connection", back_populates="training_question_sql")
+
+
+class TrainingColumnSchema(Base):
+    __tablename__ = "training_column_schema"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connection_id = Column(UUID(as_uuid=True), ForeignKey("connections.id"), nullable=False, index=True)
+    
+    # Column information
+    column_name = Column(String(255), nullable=False)
+    data_type = Column(String(100), nullable=False)
+    
+    # Enhanced description and metadata
+    description = Column(Text, nullable=True)
+    value_range = Column(Text, nullable=True)  # String describing the value range/format/categories etc.
+    
+    # Generation info
+    description_source = Column(String(50), default="manual")  # "manual", "ai", "csv_upload"
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationship
+    connection = relationship("Connection", back_populates="training_column_schema")
+    
+    # Unique constraint
+    __table_args__ = (
+        {"schema": None},
+    )
+
+
+# Update the Connection class to add the new relationships
+# Add these lines to the Connection class:
+
+# Add to Connection class relationships section:
+training_documentation = relationship("TrainingDocumentation", back_populates="connection", cascade="all, delete-orphan")
+training_question_sql = relationship("TrainingQuestionSql", back_populates="connection", cascade="all, delete-orphan")  
+training_column_schema = relationship("TrainingColumnSchema", back_populates="connection", cascade="all, delete-orphan")

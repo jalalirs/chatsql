@@ -1,7 +1,7 @@
 import asyncio
 import json
 import uuid
-from typing import Dict, Set, Optional, Any
+from typing import Dict, Set, Optional, Any, List
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from fastapi import Request
@@ -31,7 +31,6 @@ class SSEConnection:
             return False
         
         try:
-            # Create a proper SSE event dict that sse_starlette can handle
             # Add timestamp if not present
             if "timestamp" not in data:
                 data["timestamp"] = datetime.utcnow().isoformat()
@@ -67,30 +66,42 @@ class SSEConnection:
         self.last_ping = datetime.utcnow()
 
 class SSEManager:
-    """Manages all SSE connections and event broadcasting"""
+    """Manages all SSE connections and event broadcasting with bulletproof event delivery"""
     
     def __init__(self):
+        # Connection management
         self.connections: Dict[str, SSEConnection] = {}
         self.task_connections: Dict[str, Set[str]] = {}  # task_id -> set of connection_ids
         self.connection_tasks: Dict[str, Set[str]] = {}  # connection_id -> set of task_ids
+        
+        # Event history for bulletproof delivery
+        self.event_history: Dict[str, List[Dict[str, Any]]] = {}  # task_id -> list of events
+        self.max_history_per_task = 50
+        self.max_history_age_seconds = 300  # 5 minutes
+        
+        # Background tasks
         self._cleanup_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._history_cleanup_task: Optional[asyncio.Task] = None
     
     async def start(self):
-        """Start the SSE manager"""
+        """Start the SSE manager with all background tasks"""
         logger.info("Starting SSE Manager")
         self._cleanup_task = asyncio.create_task(self._cleanup_expired_connections())
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        self._history_cleanup_task = asyncio.create_task(self._cleanup_old_history())
     
     async def stop(self):
-        """Stop the SSE manager"""
+        """Stop the SSE manager and cleanup all resources"""
         logger.info("Stopping SSE Manager")
         
         # Cancel background tasks
-        if self._cleanup_task:
-            self._cleanup_task.cancel()
-        if self._heartbeat_task:
-            self._heartbeat_task.cancel()
+        for task in [self._cleanup_task, self._heartbeat_task, self._history_cleanup_task]:
+            if task:
+                task.cancel()
+        
+        # Clear event history
+        self.event_history.clear()
         
         # Close all connections
         for connection in list(self.connections.values()):
@@ -111,7 +122,7 @@ class SSEManager:
         self.connections[connection_id] = connection
         self.connection_tasks[connection_id] = set()
         
-        # Associate with task if provided
+        # Associate with task if provided (this will replay stored events)
         if task_id:
             await self.subscribe_to_task(connection_id, task_id)
         
@@ -119,7 +130,7 @@ class SSEManager:
         return connection_id
     
     async def subscribe_to_task(self, connection_id: str, task_id: str):
-        """Subscribe a connection to a specific task"""
+        """Subscribe a connection to a specific task and replay stored events"""
         if connection_id not in self.connections:
             logger.warning(f"Connection {connection_id} not found for task subscription")
             return
@@ -131,6 +142,20 @@ class SSEManager:
         
         # Add to connection mapping
         self.connection_tasks[connection_id].add(task_id)
+        
+        # Replay stored events for this task (BULLETPROOF DELIVERY)
+        if task_id in self.event_history:
+            logger.debug(f"Replaying {len(self.event_history[task_id])} stored events for task {task_id}")
+            for event in self.event_history[task_id]:
+                await self.send_to_connection(connection_id, event["event_type"], event["data"])
+            
+            # If the last event was a completion event, schedule cleanup
+            if self.event_history[task_id] and self.event_history[task_id][-1]["event_type"] in [
+                "test_completed", "training_completed", "data_generation_completed", "completed", "error",
+                "test_failed", "training_error", "data_generation_error"
+            ]:
+                # Task is complete, clean up history after a delay
+                asyncio.create_task(self._cleanup_task_history(task_id, delay=60))
         
         logger.debug(f"Subscribed connection {connection_id} to task {task_id}")
     
@@ -157,38 +182,40 @@ class SSEManager:
         return await connection.send_event(event_type, data)
     
     async def send_to_task(self, task_id: str, event_type: str, data: Dict[str, Any]) -> int:
-        """Send event to all connections subscribed to a task"""
+        """Send event to all connections subscribed to a task (BULLETPROOF DELIVERY)"""
+        
+        # ALWAYS store the event first (for late connections)
+        if task_id not in self.event_history:
+            self.event_history[task_id] = []
+        
+        self.event_history[task_id].append({
+            "event_type": event_type,
+            "data": data,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        
+        # Limit history size
+        if len(self.event_history[task_id]) > self.max_history_per_task:
+            self.event_history[task_id] = self.event_history[task_id][-self.max_history_per_task:]
+        
+        # Send to active connections (if any)
         if task_id not in self.task_connections:
-            logger.debug(f"No connections found for task {task_id}")
+            logger.debug(f"No connections found for task {task_id} - events stored for replay")
             return 0
         
         sent_count = 0
         failed_connections = []
-        # connections_to_close = [] # REMOVE THIS LIST - it's no longer needed for immediate active state change
         
         for connection_id in self.task_connections[task_id].copy():
             success = await self.send_to_connection(connection_id, event_type, data)
             if success:
                 sent_count += 1
-                
-                # Check if this is a completion event - if so, the generator in get_event_stream will handle the break
-                # REMOVE THE FOLLOWING BLOCK:
-                # if event_type in ["test_completed", "training_completed", "data_generation_completed", "completed", "error"]:
-                #     connections_to_close.append(connection_id)
-                    
             else:
                 failed_connections.append(connection_id)
         
-        # Clean up failed connections (this part is still correct)
+        # Clean up failed connections
         for connection_id in failed_connections:
             await self.unsubscribe_from_task(connection_id, task_id)
-        
-        # REMOVE THIS BLOCK:
-        # Close connections that received completion events
-        # for connection_id in connections_to_close:
-        #     if connection_id in self.connections:
-        #         self.connections[connection_id].is_active = False
-        #         logger.debug(f"Marked connection {connection_id} for closure after completion event")
         
         logger.debug(f"Sent event '{event_type}' to {sent_count} connections for task {task_id}")
         return sent_count
@@ -254,12 +281,15 @@ class SSEManager:
                         connection.update_ping()
                         
                         # Check if this was a completion event - if so, close connection after sending
-                        if event_data.get("event") in ["test_completed", "training_completed", "data_generation_completed", "completed", "error"]:
+                        if event_data.get("event") in [
+                            "test_completed", "training_completed", "data_generation_completed", "completed",
+                            "test_failed", "training_error", "data_generation_error", "error"
+                        ]:
                             logger.debug(f"Received completion event, closing connection {connection_id}")
                             break
                         
                     except asyncio.TimeoutError:
-                        # Only send heartbeat if connection is still active and not completed
+                        # Send heartbeat if connection is still active
                         if connection.is_active:
                             heartbeat_data = {
                                 "event": "heartbeat",
@@ -278,6 +308,22 @@ class SSEManager:
                 await self._disconnect(connection_id)
         
         return event_generator()
+    
+    async def send_completion_and_close(self, task_id: str, event_type: str, data: Dict[str, Any]) -> int:
+        """Send completion event and close all connections for the task"""
+        sent_count = await self.send_to_task(task_id, event_type, data)
+        
+        # Give a small delay to ensure the event is sent
+        await asyncio.sleep(0.1) 
+        
+        # Clean up all connections for this task
+        if task_id in self.task_connections:
+            connections_to_close = list(self.task_connections[task_id])
+            for connection_id in connections_to_close:
+                await self._disconnect(connection_id) 
+                logger.debug(f"Closed connection {connection_id} after task {task_id} completion")
+        
+        return sent_count
     
     async def _disconnect(self, connection_id: str):
         """Disconnect and clean up a connection"""
@@ -326,9 +372,7 @@ class SSEManager:
         while True:
             try:
                 await asyncio.sleep(settings.SSE_HEARTBEAT_INTERVAL)
-                
                 # Heartbeats are sent automatically in get_event_stream on timeout
-                # This task just ensures the loop keeps running
                 
             except asyncio.CancelledError:
                 break
@@ -336,35 +380,49 @@ class SSEManager:
                 logger.error(f"Error in heartbeat loop: {e}")
                 await asyncio.sleep(settings.SSE_HEARTBEAT_INTERVAL)
     
-    async def send_completion_and_close(self, task_id: str, event_type: str, data: Dict[str, Any]) -> int:
-        """Send completion event and close all connections for the task"""
-        # This method is primarily for tasks that *initiate* the completion/error closure,
-        # ensuring the final event is sent and then connections are cleaned up.
-        # The `get_event_stream` generator's internal break is the primary mechanism.
-
-        sent_count = await self.send_to_task(task_id, event_type, data)
-        
-        # Give a small delay to ensure the event is sent before the task potentially finishes.
-        # This is still good practice to ensure the underlying ASGI server flushes.
-        await asyncio.sleep(0.1) 
-        
-        # The `_disconnect` will eventually be called when the `get_event_stream` generator
-        # breaks its loop and the `finally` block executes.
-        # We can explicitly force disconnect here for robustness, but the generator loop
-        # and `_disconnect` from its `finally` should be sufficient.
-        # Consider making this block optional or ensuring it doesn't race with the generator's cleanup.
-        # For simplicity and to prevent racing: if this method is called, it means the task is done.
-        # Let's ensure explicit cleanup here just in case, but after the sleep.
-        
-        if task_id in self.task_connections:
-            connections_to_close = list(self.task_connections[task_id])
-            for connection_id in connections_to_close:
-                # Call _disconnect to properly clean up and remove from self.connections/task_connections
-                await self._disconnect(connection_id) 
-                logger.debug(f"Closed connection {connection_id} after task {task_id} completion")
-        
-        return sent_count
-        
+    async def _cleanup_old_history(self):
+        """Background task to clean up old event history"""
+        while True:
+            try:
+                current_time = datetime.utcnow()
+                tasks_to_cleanup = []
+                
+                for task_id, events in self.event_history.items():
+                    if not events:
+                        tasks_to_cleanup.append(task_id)
+                        continue
+                    
+                    # Check age of the oldest event
+                    oldest_event_time = datetime.fromisoformat(events[0]["timestamp"])
+                    age_seconds = (current_time - oldest_event_time).total_seconds()
+                    
+                    if age_seconds > self.max_history_age_seconds:
+                        tasks_to_cleanup.append(task_id)
+                
+                # Clean up old task histories
+                for task_id in tasks_to_cleanup:
+                    del self.event_history[task_id]
+                    logger.debug(f"Cleaned up old event history for task {task_id}")
+                
+                if tasks_to_cleanup:
+                    logger.info(f"Cleaned up event history for {len(tasks_to_cleanup)} old tasks")
+                
+                # Run cleanup every minute
+                await asyncio.sleep(60)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in history cleanup task: {e}")
+                await asyncio.sleep(60)
+    
+    async def _cleanup_task_history(self, task_id: str, delay: int = 60):
+        """Clean up task history after delay"""
+        await asyncio.sleep(delay)
+        if task_id in self.event_history:
+            del self.event_history[task_id]
+            logger.debug(f"Cleaned up event history for completed task {task_id}")
+    
     def get_connection_count(self) -> int:
         """Get total number of active connections"""
         return len(self.connections)
@@ -378,9 +436,14 @@ class SSEManager:
         return {
             "total_connections": len(self.connections),
             "total_tasks": len(self.task_connections),
+            "total_event_history": len(self.event_history),
             "connections_by_task": {
                 task_id: len(connections) 
                 for task_id, connections in self.task_connections.items()
+            },
+            "event_history_by_task": {
+                task_id: len(events)
+                for task_id, events in self.event_history.items()
             },
             "oldest_connection": min(
                 (conn.created_at for conn in self.connections.values()), 

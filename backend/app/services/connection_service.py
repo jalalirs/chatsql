@@ -6,12 +6,16 @@ import asyncio
 import pyodbc
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update  # Add delete here if missing
+
 from datetime import datetime
 import logging
-
+from app.models.database import (
+    Connection, ColumnDescription, TrainingExample, TrainingTask, ConnectionStatus, User,
+    TrainingDocumentation  # Add this import
+)
 from app.models.database import Connection, ColumnDescription, TrainingExample, TrainingTask, ConnectionStatus, User
-from app.models.schemas import ConnectionCreate, ConnectionResponse, ConnectionTestResult, ColumnDescriptionItem, TrainingDataView
+from app.models.schemas import TrainingDocumentationCreate,TrainingDocumentationResponse,ConnectionCreate, ConnectionResponse, ConnectionTestResult, ColumnDescriptionItem, TrainingDataView
 from app.models.vanna_models import DatabaseConfig, ColumnInfo
 from app.core.sse_manager import sse_manager
 from app.utils.sse_utils import SSELogger
@@ -265,13 +269,89 @@ class ConnectionService:
         except Exception as e:
             logger.error(f"Failed to check connection name for user {user_id}: {e}")
             return None
+    async def bulk_create_documentation(
+        self, 
+        db: AsyncSession, 
+        connection_id: str, 
+        docs: List[TrainingDocumentationCreate]
+    ) -> List[TrainingDocumentationResponse]:
+        """Bulk create training documentation"""
+        try:
+            connection_uuid = uuid.UUID(connection_id)
+            results = []
+            
+            for doc_data in docs:
+                doc = TrainingDocumentation(
+                    connection_id=connection_uuid,
+                    title=doc_data.title,
+                    doc_type=doc_data.doc_type,
+                    content=doc_data.content,
+                    category=doc_data.category,
+                    order_index=doc_data.order_index
+                )
+                db.add(doc)
+                results.append(doc)
+            
+            await db.commit()
+            
+            return [
+                TrainingDocumentationResponse(
+                    id=str(doc.id),
+                    connection_id=str(doc.connection_id),
+                    title=doc.title,
+                    doc_type=doc.doc_type,
+                    content=doc.content,
+                    category=doc.category,
+                    order_index=doc.order_index,
+                    is_active=doc.is_active,
+                    created_at=doc.created_at,
+                    updated_at=doc.updated_at
+                )
+                for doc in results
+            ]
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Failed to bulk create documentation: {e}")
+            raise
+        
+    async def _create_default_documentation(
+        self, 
+        db: AsyncSession,
+        connection: Connection,
+        connection_id: str,
+        user: User
+    ) -> List[TrainingDocumentationResponse]:
+        """Create default documentation entries for a new connection"""
+        documentation_creates = []
+        
+        logger.info(f"Creating default documentation for user {user.email}, connection {connection_id}")
+        
+        # MS SQL Server conventions - DEFAULT DOCUMENTATION 1
+        documentation_creates.append(TrainingDocumentationCreate(
+            title="MS SQL Server Conventions",
+            doc_type="mssql_conventions",
+            content="When generating SQL queries for Microsoft SQL Server, always adhere to the following specific syntax and conventions. Unlike other SQL dialects, MS SQL Server uses square brackets [] to delimit identifiers (like table or column names), especially if they are SQL keywords (e.g., [View]) or contain spaces. For limiting the number of rows returned, always use the TOP N clause immediately after the SELECT keyword, ensuring there is a space between TOP and the numerical value (e.g., SELECT TOP 5 Company_Name). The LIMIT and OFFSET keywords, commonly found in MySQL or PostgreSQL, are not standard. For string concatenation, use the + operator. Date and time manipulation often relies on functions like GETDATE(), DATEADD(), DATEDIFF(), and CONVERT(). Handle NULL values using IS NULL, IS NOT NULL, or functions like ISNULL(expression, replacement) and COALESCE(expression1, expression2, ...). While often case-insensitive by default depending on collation, it's best practice to match casing with database objects. Complex queries frequently leverage Common Table Expressions (CTEs) defined with WITH for readability and structuring multi-step logic. Pay close attention to correct spacing and keyword usage to avoid syntax errors.",
+            category="system",
+            order_index=1
+        ))
+        
+        # Table info - DEFAULT DOCUMENTATION 2
+        documentation_creates.append(TrainingDocumentationCreate(
+            title="Table Information",
+            doc_type="table_info",
+            content=f"I only have one table which is {connection.table_name}",
+            category="system",
+            order_index=2
+        ))
+        
+        # Save all documentation to database
+        return await self.tra.bulk_create_documentation(db, connection_id, documentation_creates)
     
     async def create_connection_for_user(
         self, 
         db: AsyncSession, 
         user: User,
-        connection_data: ConnectionCreate, 
-        column_descriptions: Optional[List[ColumnDescriptionItem]] = None
+        connection_data: ConnectionCreate
     ) -> ConnectionResponse:
         """Create a new connection for a specific user"""
         try:
@@ -282,44 +362,50 @@ class ConnectionService:
                 server=connection_data.server,
                 database_name=connection_data.database_name,
                 username=connection_data.username,
-                password=connection_data.password,  # TODO: Encrypt in production
+                password=connection_data.password,
                 table_name=connection_data.table_name,
                 driver=getattr(connection_data, 'driver', None),
                 encrypt=getattr(connection_data, 'encrypt', False),
                 trust_server_certificate=getattr(connection_data, 'trust_server_certificate', True),
                 status=ConnectionStatus.TEST_SUCCESS,
-                column_descriptions_uploaded=bool(column_descriptions)
+                column_descriptions_uploaded=False
             )
             
             db.add(connection)
-            await db.flush()  # Get the ID without committing
+            await db.flush()
             
             connection_id = str(connection.id)
             
-            # Create data directory (only for file storage like schema cache, backups, etc.)
+            # Create data directory
             connection_dir = os.path.join(self.data_dir, "connections", connection_id)
             os.makedirs(connection_dir, exist_ok=True)
             
-            # Save column descriptions if provided
-            if column_descriptions:
-                for col_desc in column_descriptions:
-                    column_desc_record = ColumnDescription(
-                        connection_id=connection.id,
-                        column_name=col_desc.column_name,
-                        description=col_desc.description,
-                        data_type=col_desc.data_type,
-                        variable_range=col_desc.variable_range
-                    )
-                    db.add(column_desc_record)
+            # CREATE DEFAULT DOCUMENTATION using training service
+            try:
+                from app.services.training_service import training_service
+                from app.models.schemas import TrainingDocumentationCreate
                 
-                # Also save as CSV file for backup/export
-                csv_path = os.path.join(connection_dir, "column_descriptions.csv")
-                with open(csv_path, 'w', newline='') as f:
-                    f.write("column,description\n")
-                    for col_desc in column_descriptions:
-                        # Escape commas and quotes in CSV
-                        desc = col_desc.description.replace('"', '""') if col_desc.description else ""
-                        f.write(f'"{col_desc.column_name}","{desc}"\n')
+                default_docs = [
+                    TrainingDocumentationCreate(
+                        title="MS SQL Server Conventions",
+                        doc_type="mssql_conventions",
+                        content="When generating SQL queries for Microsoft SQL Server, always adhere to the following specific syntax and conventions. Unlike other SQL dialects, MS SQL Server uses square brackets [] to delimit identifiers (like table or column names), especially if they are SQL keywords (e.g., [View]) or contain spaces. For limiting the number of rows returned, always use the TOP N clause immediately after the SELECT keyword, ensuring there is a space between TOP and the numerical value (e.g., SELECT TOP 5 Company_Name). The LIMIT and OFFSET keywords, commonly found in MySQL or PostgreSQL, are not standard. For string concatenation, use the + operator. Date and time manipulation often relies on functions like GETDATE(), DATEADD(), DATEDIFF(), and CONVERT(). Handle NULL values using IS NULL, IS NOT NULL, or functions like ISNULL(expression, replacement) and COALESCE(expression1, expression2, ...). While often case-insensitive by default depending on collation, it's best practice to match casing with database objects. Complex queries frequently leverage Common Table Expressions (CTEs) defined with WITH for readability and structuring multi-step logic. Pay close attention to correct spacing and keyword usage to avoid syntax errors.",
+                        category="system",
+                        order_index=1
+                    ),
+                    TrainingDocumentationCreate(
+                        title="Table Information", 
+                        doc_type="table_info",
+                        content=f"I only have one table which is {connection_data.table_name}",
+                        category="system",
+                        order_index=2
+                    )
+                ]
+                
+                await training_service.bulk_create_documentation(db, connection_id, default_docs)
+                logger.info(f"Created default documentation for connection {connection_id}")
+            except Exception as e:
+                logger.warning(f"Failed to create default documentation for connection {connection_id}: {e}")
             
             await db.commit()
             
@@ -361,7 +447,7 @@ class ConnectionService:
             await db.rollback()
             logger.error(f"Failed to create connection for user {user.email}: {e}")
             raise
-    
+
     async def list_user_connections(self, db: AsyncSession, user_id: str) -> List[ConnectionResponse]:
         """List all connections for a specific user"""
         try:
@@ -451,7 +537,17 @@ class ConnectionService:
                 logger.warning(f"Connection {connection_id} not found for user {user_id}")
                 return False
             
-            # Delete related records first (cascade deletes will handle conversations/messages)
+            # Import the new training models
+            from app.models.database import TrainingDocumentation, TrainingQuestionSql, TrainingColumnSchema
+            
+            # Delete related records first (in correct order to avoid foreign key violations)
+            
+            # Delete NEW training tables first (these are causing the constraint violation)
+            await db.execute(delete(TrainingDocumentation).where(TrainingDocumentation.connection_id == connection_uuid))
+            await db.execute(delete(TrainingQuestionSql).where(TrainingQuestionSql.connection_id == connection_uuid))
+            await db.execute(delete(TrainingColumnSchema).where(TrainingColumnSchema.connection_id == connection_uuid))
+            
+            # Delete OLD training tables
             await db.execute(delete(TrainingExample).where(TrainingExample.connection_id == connection_uuid))
             await db.execute(delete(ColumnDescription).where(ColumnDescription.connection_id == connection_uuid))
             await db.execute(delete(TrainingTask).where(TrainingTask.connection_id == connection_id))
@@ -476,7 +572,6 @@ class ConnectionService:
             await db.rollback()
             logger.error(f"Failed to delete connection {connection_id} for user {user_id}: {e}")
             return False
-    
     # ========================
     # UTILITY METHODS
     # ========================
@@ -711,22 +806,25 @@ Key Guidelines:
             schema_data = await self.get_connection_schema(connection_id)
             if not schema_data:
                 return []
-            
+
             columns_info = schema_data.get("columns", {})
-            
-            # Get column descriptions from database
-            stmt = select(ColumnDescription).where(
-                ColumnDescription.connection_id == uuid.UUID(connection_id)
+
+            # CHANGE THIS: Import and use TrainingColumnSchema instead of ColumnDescription
+            from app.models.database import TrainingColumnSchema
+            stmt = select(TrainingColumnSchema).where(
+                TrainingColumnSchema.connection_id == uuid.UUID(connection_id),
+                TrainingColumnSchema.is_active == True
             )
             result = await db.execute(stmt)
             db_descriptions = result.scalars().all()
-            
+
             # Create mapping of column descriptions
             description_map = {
                 desc.column_name: desc.description 
                 for desc in db_descriptions
+                if desc.description
             }
-            
+
             # Combine schema info with descriptions
             column_data = []
             for col_name, col_info in columns_info.items():
@@ -740,13 +838,12 @@ Key Guidelines:
                     "range": col_info.get("range"),
                     "date_range": col_info.get("date_range")
                 })
-            
+
             return column_data
             
         except Exception as e:
             logger.error(f"Failed to get column descriptions for {connection_id}: {e}")
             return []
-    
     async def update_column_descriptions(
         self, 
         db: AsyncSession, 
