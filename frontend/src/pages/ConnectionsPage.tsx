@@ -145,12 +145,20 @@ export const ConnectionsPage: React.FC = () => {
     navigate(`/connections/${connectionId}`);
   };
 
-  const handleConnectionCreated = (connectionId: string) => {
-    console.log('Connection created:', connectionId);
+  const handleConnectionCreated = (connectionId: string, action?: 'chat' | 'details') => {
+    console.log('Connection created:', connectionId, 'Action:', action);
     setShowSetupModal(false);
     loadConnections(); // Reload the connections list
-    // Navigate to the connection detail page
-    navigate(`/connections/${connectionId}`);
+    
+    // Navigate based on user choice
+    if (action === 'chat') {
+      // Go to chat with this connection pre-selected
+      navigate('/', { state: { selectedConnectionId: connectionId } });
+    } else if (action === 'details') {
+      // Go to connection details
+      navigate(`/connections/${connectionId}`);
+    }
+    // If no action specified, stay on connections page (for "Create Another")
   };
 
   const handleActionClick = (action: string, connectionId: string) => {
@@ -190,25 +198,31 @@ export const ConnectionsPage: React.FC = () => {
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate('/')}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <ArrowLeft size={20} className="text-gray-600" />
-              </button>
-              <div>
-                <h1 className="text-xl font-semibold text-gray-900">Database Connections</h1>
-                <p className="text-sm text-gray-500">Manage your database connections and AI models</p>
-              </div>
+            {/* Left side with breadcrumb */}
+            <div className="flex items-center gap-2">
+              {/* Breadcrumb Navigation */}
+              <nav className="flex items-center text-sm">
+                <button
+                  onClick={() => navigate('/')}
+                  className="text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                >
+                  Chat
+                </button>
+                <span className="text-gray-400">/</span>
+                <span className="text-gray-900 font-medium px-2">Connections</span>
+              </nav>
             </div>
-            <button
-              onClick={() => setShowSetupModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Plus size={16} />
-              Add Connection
-            </button>
+            
+            {/* Right side with Add Connection button */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowSetupModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Plus size={16} />
+                Add Connection
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -343,6 +357,23 @@ export const ConnectionsPage: React.FC = () => {
                       </span>
                     </div>
                   </div>
+
+                  {connection.status === 'trained' && (
+                    <div className="mt-4 pt-4 border-t border-gray-100">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate('/', { state: { selectedConnectionId: connection.id } });
+                        }}
+                        className="w-full px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+                        </svg>
+                        Use in Chat
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}

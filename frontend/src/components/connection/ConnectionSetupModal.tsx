@@ -6,7 +6,7 @@ import { api } from '../../services/auth';
 interface ConnectionSetupModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnectionCreated: (connectionId: string) => void;
+  onConnectionCreated: (connectionId: string, action?: 'chat' | 'details') => void;
 }
 
 interface ConnectionFormData {
@@ -44,7 +44,8 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
     encrypt: true,
     trust_server_certificate: false
   });
-
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
+  const [createdConnectionId, setCreatedConnectionId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -309,7 +310,10 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
       const connectionData = response.data;
       console.log('Connection created successfully:', connectionData);
       
-      onConnectionCreated(connectionData.id);
+      // Store the connection ID and show success dialog
+      setCreatedConnectionId(connectionData.id);
+      setShowSuccessDialog(true);
+      
     } catch (error: any) {
       console.error('Failed to create connection:', error);
       console.error('Error response:', error.response?.data);
@@ -318,6 +322,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
       setCreating(false);
     }
   };
+  
 
   const handleClose = () => {
     // Reset form
@@ -595,6 +600,79 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
           </div>
         </div>
       </div>
+      {showSuccessDialog && createdConnectionId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+                <CheckCircle size={24} className="text-green-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Connection Created!</h3>
+                <p className="text-sm text-gray-600">Your database connection is ready to use.</p>
+              </div>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-gray-700">
+                What would you like to do next?
+              </p>
+            </div>
+            
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => {
+                  setShowSuccessDialog(false);
+                  onConnectionCreated(createdConnectionId, 'chat');
+                  handleClose();
+                }}
+                className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+                </svg>
+                Start Chatting
+              </button>
+              
+              <button
+                onClick={() => {
+                  setShowSuccessDialog(false);
+                  onConnectionCreated(createdConnectionId, 'details');
+                  handleClose();
+                }}
+                className="w-full px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"
+              >
+                <Database size={20} />
+                View Connection Details
+              </button>
+              
+              <button
+                onClick={() => {
+                  setShowSuccessDialog(false);
+                  onConnectionCreated(createdConnectionId);
+                  // Reset form for another connection
+                  setFormData({
+                    name: '',
+                    server: '',
+                    database_name: '',
+                    username: '',
+                    password: '',
+                    table_name: '',
+                    driver: 'ODBC Driver 18 for SQL Server',
+                    encrypt: true,
+                    trust_server_certificate: false
+                  });
+                  setTestResult(null);
+                  setCreatedConnectionId(null);
+                }}
+                className="w-full px-3 py-2 text-gray-600 text-sm hover:text-gray-800 transition-colors"
+              >
+                Create Another Connection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

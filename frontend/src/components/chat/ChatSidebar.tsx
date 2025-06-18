@@ -198,12 +198,17 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                         </button>
                       </div>
                     </div>
-                    <div className="text-xs text-gray-400 truncate mt-1">
-                      {conv.latest_message || `${conv.message_count} messages`}
-                    </div>
+                    
+                    {/* Only show latest message if available */}
+                    {conv.latest_message && (
+                      <div className="text-xs text-gray-400 truncate mt-1">
+                        {conv.latest_message}
+                      </div>
+                    )}
+                    
                     <div className="flex items-center justify-between mt-2">
                       <div className="text-xs text-gray-500">
-                        {formatTimeAgo(conv.last_message_at)}
+                        {formatTimeAgo(conv.last_message_at || conv.created_at)}
                       </div>
                       <div className="text-xs text-gray-500 truncate ml-2">
                         {conv.connection_name}

@@ -39,6 +39,13 @@ export const ChatLayout: React.FC = () => {
   const handleManageConnections = () => {
     navigate('/connections');
   };
+  
+  // ADD THIS: New handler for when a message is sent
+  const handleMessageSent = () => {
+    console.log('💬 Message sent, refreshing sidebar...');
+    // Refresh sidebar to update message counts
+    setRefreshTrigger(prev => prev + 1);
+  };
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -55,7 +62,7 @@ export const ChatLayout: React.FC = () => {
         onConversationDeleted={handleConversationDeleted}
       />
 
-      {/* Main Chat Area */}
+      {/* Main Chat Area - ADD onMessageSent prop */}
       <ChatMain 
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
@@ -63,6 +70,7 @@ export const ChatLayout: React.FC = () => {
         onNewConversation={handleNewConversation}
         onConversationCreated={handleConversationCreated}
         onManageConnections={handleManageConnections}
+        onMessageSent={handleMessageSent}
       />
     </div>
   );

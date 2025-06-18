@@ -4,6 +4,8 @@ import { ChatMessages } from './ChatMessages';
 import { ChatInput } from './ChatInput';
 import { chatService } from '../../services/chat';
 import { Connection } from '../../types/chat';
+import { useLocation } from 'react-router-dom';
+
 
 interface ChatMainProps {
   sidebarOpen: boolean;
@@ -12,6 +14,7 @@ interface ChatMainProps {
   onNewConversation: () => void;
   onConversationCreated: (conversationId: string) => void;
   onManageConnections: () => void;
+  onMessageSent?: () => void; // Add this line - make it optional with ?
 }
 
 export const ChatMain: React.FC<ChatMainProps> = ({
@@ -20,8 +23,10 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   activeConversation,
   onNewConversation,
   onConversationCreated,
-  onManageConnections
+  onManageConnections,
+  onMessageSent
 }) => {
+  const location = useLocation();
   const [messages, setMessages] = useState<any[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,6 +36,21 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   const [justCreatedConversation, setJustCreatedConversation] = useState<string | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
 
+  // Handle pre-selected connection from navigation
+  useEffect(() => {
+    if (location.state?.selectedConnectionId && connections.length > 0) {
+      const connection = connections.find(c => c.id === location.state.selectedConnectionId);
+      if (connection && connection.status === 'trained') {
+        setSelectedConnection(connection);
+        // Clear the navigation state to prevent re-selection
+        window.history.replaceState({}, document.title);
+        
+        // Optional: Show a toast or notification
+        console.log(`✅ Connection "${connection.name}" selected and ready for chat!`);
+      }
+    }
+  }, [location.state, connections]);
+  
   // Load connections on mount
   useEffect(() => {
     loadConnections();

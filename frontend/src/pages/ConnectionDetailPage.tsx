@@ -132,31 +132,53 @@ export const ConnectionDetailPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+
       {/* Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate('/connections')}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <ArrowLeft size={20} className="text-gray-600" />
-              </button>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <Database size={20} className="text-blue-600" />
-                </div>
-                <div>
-                  <h1 className="text-xl font-semibold text-gray-900">{connection.name}</h1>
-                  <p className="text-sm text-gray-500">{connection.server} • {connection.database_name}</p>
-                </div>
-              </div>
+            {/* Left side with breadcrumb */}
+            <div className="flex items-center gap-2">
+              {/* Breadcrumb Navigation */}
+              <nav className="flex items-center text-sm">
+                <button
+                  onClick={() => navigate('/')}
+                  className="text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                >
+                  Chat
+                </button>
+                <span className="text-gray-400">/</span>
+                <button
+                  onClick={() => navigate('/connections')}
+                  className="text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                >
+                  Connections
+                </button>
+                <span className="text-gray-400">/</span>
+                <span className="text-gray-900 font-medium px-2">{connection.name}</span>
+              </nav>
             </div>
             
-            <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${statusInfo.bg} ${statusInfo.color}`}>
-              <StatusIcon size={16} />
-              <span className="font-medium">{statusInfo.text}</span>
+            {/* Right side with actions and status */}
+            <div className="flex items-center gap-3">
+              {/* Use in Chat button if trained */}
+              {connection.status === 'trained' && (
+                <button
+                  onClick={() => navigate('/', { state: { selectedConnectionId: connection.id } })}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <svg width={16} height={16} fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+                  </svg>
+                  Use in Chat
+                </button>
+              )}
+              
+              {/* Status badge */}
+              <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${statusInfo.bg} ${statusInfo.color}`}>
+                <StatusIcon size={16} />
+                <span className="font-medium">{statusInfo.text}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -193,6 +215,7 @@ export const ConnectionDetailPage: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {renderTabContent()}
       </div>
+      
     </div>
   );
 };

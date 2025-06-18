@@ -759,9 +759,14 @@ class ConversationService:
             user, db, connection_id, limit=100
         )
         
+        logger.info(f"Found {len(conversations)} conversations for user {user.email}")
+        
         # Format for API response
         result = []
         for conv in conversations:
+            # Log conversation details
+            logger.debug(f"Processing conversation {conv.id}: message_count={conv.message_count}, total_queries={conv.total_queries}")
+            
             # Get connection name
             connection_result = await db.execute(
                 select(Connection.name).where(Connection.id == conv.connection_id)
@@ -776,6 +781,18 @@ class ConversationService:
             )
             latest_message = latest_message_result.scalar()
             
+            # Get actual message count for verification
+            actual_count_result = await db.execute(
+                select(func.count(Message.id)).where(
+                    Message.conversation_id == conv.id,
+                    Message.is_deleted == False
+                )
+            )
+            actual_count = actual_count_result.scalar() or 0
+            
+            if actual_count != conv.message_count:
+                logger.warning(f"Conversation {conv.id} has mismatched message count: DB={conv.message_count}, Actual={actual_count}")
+            
             result.append(ConversationResponse(
                 id=str(conv.id),
                 connection_id=str(conv.connection_id),
@@ -785,8 +802,8 @@ class ConversationService:
                 is_active=conv.is_active,
                 is_pinned=conv.is_pinned,
                 connection_locked=conv.connection_locked,
-                message_count=conv.message_count,
-                total_queries=conv.total_queries,
+                message_count=conv.message_count or 0,  # Ensure never None
+                total_queries=conv.total_queries or 0,  # Ensure never None
                 created_at=conv.created_at,
                 updated_at=conv.updated_at,
                 last_message_at=conv.last_message_at,
@@ -794,7 +811,6 @@ class ConversationService:
             ))
         
         return result
-
     # Add this method to your existing ConversationService class in conversation_service.py
 
     async def get_conversation_with_messages(
@@ -920,7 +936,7 @@ class ConversationService:
             await db.rollback()
             logger.error(f"Failed to delete conversation {conversation_id} for user {user.email}: {e}")
             raise
-    
+
     async def add_message(
         self,
         conversation: Conversation,
@@ -930,6 +946,9 @@ class ConversationService:
     ) -> Message:
         """Add message to conversation"""
         
+        # Log initial state
+        logger.info(f"Adding message to conversation {conversation.id}. Current message_count: {conversation.message_count}")
+        
         # Create message
         message = Message(
             conversation_id=conversation.id,
@@ -938,14 +957,23 @@ class ConversationService:
             generated_sql=getattr(message_data, 'generated_sql', None),
             query_results=getattr(message_data, 'query_results', None),
             chart_data=getattr(message_data, 'chart_data', None),
-            summary=getattr(message_data, 'summary', None),  # ✅ ADD THIS
+            summary=getattr(message_data, 'summary', None),
             row_count=getattr(message_data, 'row_count', None),
             **additional_data
         )
         
         db.add(message)
         
-        # Update conversation stats
+        # Update conversation stats - handle NULL values
+        if conversation.message_count is None:
+            logger.warning(f"Conversation {conversation.id} has NULL message_count, setting to 0")
+            conversation.message_count = 0
+        
+        if conversation.total_queries is None:
+            logger.warning(f"Conversation {conversation.id} has NULL total_queries, setting to 0")
+            conversation.total_queries = 0
+        
+        # Increment counts
         conversation.message_count += 1
         conversation.last_message_at = datetime.now(timezone.utc)
         conversation.updated_at = datetime.now(timezone.utc)
@@ -965,6 +993,10 @@ class ConversationService:
         
         await db.commit()
         await db.refresh(message)
+        await db.refresh(conversation)  # Refresh to get updated counts
+        
+        # Log final state
+        logger.info(f"Message added successfully. New message_count: {conversation.message_count}, total_queries: {conversation.total_queries}")
         
         return message
     
