@@ -231,6 +231,9 @@ class ConversationService:
             chart_result = await self._generate_chart(vanna_instance, question, sql, data, sse_logger, session_id, user)
             if chart_result and chart_result.chart_figure:
                 chart_data = chart_result.chart_figure
+            else:
+                await sse_logger.info("Chart generation skipped or failed")    
+        
             
             # Generate summary
             await sse_logger.progress(85, "Generating summary...")

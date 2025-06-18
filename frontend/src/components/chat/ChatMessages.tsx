@@ -2,6 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { Database, Play, Loader2 } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { PlotlyChart } from './PlotlyChart'; // Import the new component
 
 interface ChatMessagesProps {
   messages: any[];
@@ -116,60 +117,10 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                 </div>
               )}
               
-              {/* Chart */}
               {msg.chart && (
                 <div className="mt-4 animate-fadeIn">
-                  <div className="text-sm font-medium text-gray-700 mb-3">{msg.chart.title}:</div>
-                  <div className="bg-gray-50 border rounded-lg p-4">
-                    <div className="relative h-64">
-                      <svg viewBox="0 0 400 200" className="w-full h-full">
-                        {/* Chart background grid */}
-                        <defs>
-                          <pattern id="grid" width="40" height="20" patternUnits="userSpaceOnUse">
-                            <path d="M 40 0 L 0 0 0 20" fill="none" stroke="#e5e7eb" strokeWidth="1"/>
-                          </pattern>
-                        </defs>
-                        <rect width="400" height="200" fill="url(#grid)" />
-                        
-                        {/* Chart bars */}
-                        {msg.chart.data.map((value: number, idx: number) => {
-                          const maxValue = Math.max(...msg.chart.data);
-                          const barHeight = (value / maxValue) * 120;
-                          const x = 50 + (idx * 80);
-                          const y = 150 - barHeight;
-                          
-                          return (
-                            <g key={idx}>
-                              <rect
-                                x={x}
-                                y={y}
-                                width="60"
-                                height={barHeight}
-                                fill="#3b82f6"
-                                rx="2"
-                                className="animate-slideUp"
-                              />
-                              <text
-                                x={x + 30}
-                                y="170"
-                                textAnchor="middle"
-                                className="text-xs fill-gray-600"
-                              >
-                                {msg.chart.labels[idx]}
-                              </text>
-                              <text
-                                x={x + 30}
-                                y={y - 5}
-                                textAnchor="middle"
-                                className="text-xs fill-gray-700"
-                              >
-                                ${Math.round(value/1000)}K
-                              </text>
-                            </g>
-                          );
-                        })}
-                      </svg>
-                    </div>
+                  <div className="bg-white border rounded-lg p-4">
+                    <PlotlyChart chartData={msg.chart} />
                   </div>
                 </div>
               )}

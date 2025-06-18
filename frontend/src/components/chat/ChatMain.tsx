@@ -50,7 +50,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       }
     }
   }, [location.state, connections]);
-  
+
   // Load connections on mount
   useEffect(() => {
     loadConnections();
@@ -121,6 +121,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
     
     try {
       console.log('🔍 Loading conversation:', activeConversation);
+      // This call is safe here because activeConversation is guaranteed to be a string
       const conversationWithMessages = await chatService.getConversationWithMessages(activeConversation);
       console.log('📨 Loaded conversation data:', conversationWithMessages);
       
@@ -342,15 +343,22 @@ export const ChatMain: React.FC<ChatMainProps> = ({
             }
           });
           
-          eventSource.addEventListener('chart_generated', (event) => {
+          eventSource.addEventListener('chart_generated', (event) => { // Keep this one
             console.log('📈 Chart generated event:', event.data);
             try {
               const data = JSON.parse(event.data);
+              console.log('📊 Chart data structure:', {
+                hasChartData: !!data.chart_data,
+                chartDataKeys: data.chart_data ? Object.keys(data.chart_data) : [],
+                dataLength: data.chart_data?.data?.length,
+                layoutTitle: data.chart_data?.layout?.title
+              });
+              
               setMessages(prev => prev.map(msg => 
                 msg.id === aiMessageId 
                   ? { 
                       ...msg,
-                      chart: data.chart_data
+                      chart: data.chart_data  // Make sure this is chart_data not chart
                     }
                   : msg
               ));
