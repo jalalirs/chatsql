@@ -188,7 +188,8 @@ class VannaService:
         vanna_config: VannaConfig,
         retrain: bool = True,
         progress_callback: Optional[callable] = None,
-        user: Optional[User] = None
+        user: Optional[User] = None,
+        db: Optional[AsyncSession] = None  # ADD THIS
     ) -> Optional[MyVanna]:
         """Setup and train Vanna instance - STATELESS, returns instance but doesn't cache it"""
         
@@ -274,7 +275,7 @@ class VannaService:
             
             # Load and train with data
             if retrain:
-                await self._train_vanna_instance(vanna_instance, connection_id, progress_callback, user)
+                await self._train_vanna_instance(vanna_instance, connection_id, progress_callback, user,db)
             
             if progress_callback:
                 await progress_callback(100, "Vanna setup and training completed")
@@ -303,7 +304,8 @@ class VannaService:
         vanna_instance: MyVanna, 
         connection_id: str, 
         progress_callback: Optional[callable] = None,
-        user: Optional[User] = None
+        user: Optional[User] = None,
+        db: Optional[AsyncSession] = None  # ADD THIS
     ):
         """Train Vanna instance with database training data"""
         
@@ -315,20 +317,18 @@ class VannaService:
         try:
             # Import here to avoid circular imports
             from app.services.training_service import training_service
-            from app.core.database import get_db
+            if not db:
+                logger.error("No database session provided to training function")
+                if progress_callback:
+                    await progress_callback(95, "Failed to load training data - no DB session")
+                return
             
-            # Get database session
-            async for db in get_db():
-                try:
-                    # Load training data from database
-                    documentation = await training_service.get_training_documentation(db, connection_id)
-                    questions = await training_service.get_training_questions(db, connection_id)
-                    columns = await training_service.get_training_columns(db, connection_id)
-                    break  # Exit the async for loop
-                except Exception as e:
-                    logger.error(f"Failed to get database session: {e}")
-                    raise
-        
+   
+            # Load training data from database
+            documentation = await training_service.get_training_documentation(db, connection_id)
+            questions = await training_service.get_training_questions(db, connection_id)
+            columns = await training_service.get_training_columns(db, connection_id)
+
         except Exception as e:
             logger.error(f"Failed to load training data from database{user_info}: {e}")
             if progress_callback:
@@ -378,6 +378,7 @@ class VannaService:
                     progress = 40 + int((current_item / total_items) * 40)
                     if progress_callback:
                         await progress_callback(progress, f"Training column schema: {column.column_name}")
+                    logger.info(f"Trained column schema: {content}")
             except Exception as e:
                 logger.error(f"Failed to train column schema {column.column_name}: {e}")
                 current_item += 1

@@ -7,6 +7,9 @@ import { sseConnection } from '../services/sse';
 import { trainingService } from '../services/training';
 import { api } from '../services/auth';
 import { DocumentationTab } from '../components/connection/DocumentationTab';
+import { TrainingDataTab as TrainingDataTabComponent } from '../components/connection/TrainingDataTab';
+import { TrainingTab as TrainingTabComponent } from '../components/connection/TrainingTab';
+
 
 
 type TabType = 'details' | 'schema-descriptions' | 'documentation' | 'training-data' | 'training';
@@ -113,15 +116,15 @@ export const ConnectionDetailPage: React.FC = () => {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'details':
-        return <DetailsTab connection={connection} onConnectionUpdate={setConnection} />;
+        return <DetailsTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       case 'schema-descriptions':
-        return <SchemaDescriptionsTab connection={connection} onConnectionUpdate={setConnection} />;
+        return <SchemaDescriptionsTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       case 'documentation':
-        return <DocumentationTab connection={connection} onConnectionUpdate={setConnection} />;
+        return <DocumentationTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       case 'training-data':
-        return <TrainingDataTab connection={connection} onConnectionUpdate={setConnection} />;
+        return <TrainingDataTabComponent connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       case 'training':
-        return <TrainingTab connection={connection} onConnectionUpdate={setConnection} />;
+        return <TrainingTabComponent connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       default:
         return null;
     }
@@ -1168,20 +1171,3 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
 };
 
 
-const TrainingDataTab: React.FC<{ connection: Connection; onConnectionUpdate: (connection: Connection) => void }> = ({ connection, onConnectionUpdate }) => {
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <h2 className="text-lg font-medium text-gray-900 mb-4">Training Data</h2>
-      <p className="text-gray-600">This tab will show question-SQL pairs with CRUD operations.</p>
-    </div>
-  );
-};
-
-const TrainingTab: React.FC<{ connection: Connection; onConnectionUpdate: (connection: Connection) => void }> = ({ connection, onConnectionUpdate }) => {
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <h2 className="text-lg font-medium text-gray-900 mb-4">Training</h2>
-      <p className="text-gray-600">This tab will handle model training operations.</p>
-    </div>
-  );
-};

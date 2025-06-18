@@ -1438,7 +1438,7 @@ async def _run_model_training(
         
         # Train model
         vanna_instance = await vanna_service.setup_and_train_vanna(
-            connection_id, db_config, vanna_config, retrain=True, progress_callback=progress_callback, user=user
+            connection_id, db_config, vanna_config, retrain=True, progress_callback=progress_callback, user=user,db=db
         )
         
         if vanna_instance:

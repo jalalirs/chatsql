@@ -269,6 +269,7 @@ class ConnectionService:
         except Exception as e:
             logger.error(f"Failed to check connection name for user {user_id}: {e}")
             return None
+    
     async def bulk_create_documentation(
         self, 
         db: AsyncSession, 
@@ -458,8 +459,18 @@ class ConnectionService:
             result = await db.execute(stmt)
             connections = result.scalars().all()
             
-            return [
-                ConnectionResponse(
+            responses = []
+            for conn in connections:
+                # Calculate actual examples count for each connection
+                from app.models.database import TrainingQuestionSql
+                examples_stmt = select(TrainingQuestionSql).where(
+                    TrainingQuestionSql.connection_id == conn.id,
+                    TrainingQuestionSql.is_active == True
+                )
+                examples_result = await db.execute(examples_stmt)
+                actual_examples_count = len(examples_result.scalars().all())
+                
+                responses.append(ConnectionResponse(
                     id=str(conn.id),
                     name=conn.name,
                     server=conn.server,
@@ -471,19 +482,19 @@ class ConnectionService:
                     status=conn.status,
                     test_successful=conn.test_successful,
                     column_descriptions_uploaded=conn.column_descriptions_uploaded,
-                    generated_examples_count=conn.generated_examples_count,
+                    generated_examples_count=actual_examples_count,  # ← Use actual count
                     total_queries=conn.total_queries or 0,
                     last_queried_at=conn.last_queried_at,
                     created_at=conn.created_at,
                     trained_at=conn.trained_at
-                )
-                for conn in connections
-            ]
+                ))
+            
+            return responses
             
         except Exception as e:
             logger.error(f"Failed to list connections for user {user_id}: {e}")
             return []
-    
+
     async def get_user_connection(self, db: AsyncSession, user_id: str, connection_id: str) -> Optional[ConnectionResponse]:
         """Get a connection by ID that belongs to a specific user"""
         try:
@@ -497,6 +508,15 @@ class ConnectionService:
             if not connection:
                 return None
             
+            # CALCULATE ACTUAL TRAINING EXAMPLES COUNT FROM NEW TABLE
+            from app.models.database import TrainingQuestionSql
+            examples_stmt = select(TrainingQuestionSql).where(
+                TrainingQuestionSql.connection_id == uuid.UUID(connection_id),
+                TrainingQuestionSql.is_active == True
+            )
+            examples_result = await db.execute(examples_stmt)
+            actual_examples_count = len(examples_result.scalars().all())
+            
             return ConnectionResponse(
                 id=str(connection.id),
                 name=connection.name,
@@ -509,7 +529,7 @@ class ConnectionService:
                 status=connection.status,
                 test_successful=connection.test_successful,
                 column_descriptions_uploaded=connection.column_descriptions_uploaded,
-                generated_examples_count=connection.generated_examples_count,
+                generated_examples_count=actual_examples_count,  # ← Use actual count
                 total_queries=connection.total_queries or 0,
                 last_queried_at=connection.last_queried_at,
                 created_at=connection.created_at,
@@ -519,7 +539,7 @@ class ConnectionService:
         except Exception as e:
             logger.error(f"Failed to get connection {connection_id} for user {user_id}: {e}")
             return None
-    
+        
     async def delete_user_connection(self, db: AsyncSession, user_id: str, connection_id: str) -> bool:
         """Delete a connection that belongs to a specific user"""
         try:

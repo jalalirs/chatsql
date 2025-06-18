@@ -3,8 +3,8 @@ fix encryption vs no encryption (Done)
 delete conversation (Done)
 add plot
 remove examples in conversation page (Done)
-allow deleting examples
-allow adding manual examples 
+allow deleting examples (done)
+allow adding manual examples (done)
 change regenerate to generate (Done)
 add better navigation between connection and chat
 fix number of messages in right pannel
