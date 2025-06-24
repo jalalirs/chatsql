@@ -6,6 +6,7 @@ import { chatService } from '../../services/chat';
 import { Connection } from '../../types/chat';
 import { useLocation } from 'react-router-dom';
 
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:6020';
 
 interface ChatMainProps {
   sidebarOpen: boolean;
@@ -234,7 +235,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           console.log('🔌 Setting up EventSource connection...');
           const fullStreamUrl = response.stream_url.startsWith('http') 
             ? response.stream_url 
-            : `http://localhost:6020${response.stream_url}`;
+            : `${API_BASE_URL}${response.stream_url}`;
           
           console.log('🌐 EventSource URL:', fullStreamUrl);
           

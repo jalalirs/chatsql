@@ -4,6 +4,8 @@ import { trainingService } from '../../services/training';
 import { sseConnection } from '../../services/sse';
 import { Connection } from '../../types/chat';
 
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:6020';
+
 interface TrainingTabProps {
   connection: Connection;
   onConnectionUpdate: (connection: Connection) => void;
@@ -32,7 +34,7 @@ const TrainingTab: React.FC<TrainingTabProps> = ({ connection, onConnectionUpdat
       if (result.stream_url) {
         const fullStreamUrl = result.stream_url.startsWith('http') 
           ? result.stream_url 
-          : `http://localhost:6020${result.stream_url}`;
+          : `http://${API_BASE_URL}$:6020${result.stream_url}`;
         
         console.log('🔗 Connecting to training SSE stream:', fullStreamUrl);
         

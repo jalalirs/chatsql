@@ -4,6 +4,8 @@ import { Connection } from '../../types/chat';
 import { api } from '../../services/auth';
 import { sseConnection } from '../../services/sse';
 
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:6020';
+
 interface TrainingQuestion {
   id: string;
   connection_id: string;
@@ -84,7 +86,7 @@ export const TrainingDataTab: React.FC<TrainingDataTabProps> = ({ connection, on
       if (result.stream_url) {
         const fullStreamUrl = result.stream_url.startsWith('http') 
           ? result.stream_url 
-          : `http://localhost:6020${result.stream_url}`;
+          : `http://${API_BASE_URL}$:6020${result.stream_url}`;
         
         const eventSource = new EventSource(fullStreamUrl);
         

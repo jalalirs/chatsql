@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { X, Database, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { api } from '../../services/auth';
 
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:6020';
+
 
 interface ConnectionSetupModalProps {
   isOpen: boolean;
@@ -34,12 +36,12 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
   onConnectionCreated
 }) => {
   const [formData, setFormData] = useState<ConnectionFormData>({
-    name: 'employees',
-    server: 'localhost,1433',
-    database_name: 'TestCompanyDB',
-    username: 'sa',
-    password: 'l.messi10',
-    table_name: 'Employees',
+    name: '',
+    server: '',
+    database_name: '',
+    username: '',
+    password: '',
+    table_name: '',
     driver: 'ODBC Driver 18 for SQL Server',
     encrypt: true,
     trust_server_certificate: false
@@ -90,7 +92,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
   
       // Connect to SSE stream for test results
       if (taskId) {
-        const streamUrl = `http://localhost:6020/events/stream/${taskId}`;
+        const streamUrl = `http://${API_BASE_URL}$:6020/events/stream/${taskId}`;
         console.log('🔗 Connecting to SSE stream:', streamUrl);
         
         const eventSource = new EventSource(streamUrl);
