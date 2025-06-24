@@ -29,11 +29,13 @@ services:
       - ./backend/data:/app/data
       - ./backend/uploads:/app/uploads
       - ./chromadb_model:/root/.cache/chroma/onnx_models/all-MiniLM-L6-v2/onnx
+      - ./patch-cors.py:/app/patch-cors.py  # Add this
     ports:
       - "6020:6020"
     depends_on:
       postgres:
         condition: service_healthy
+    command: python /app/patch-cors.py  # Override the command
 
   frontend:
     image: jalalirs/tex2sql-frontend:latest # <--- Pulls from Docker Hub
@@ -42,7 +44,12 @@ services:
     depends_on:
       - backend
     environment:
-      - REACT_APP_API_URL=http://localhost:6020
+      - REACT_APP_API_URL=http://10.11.53.10:6020
+    command: |
+      sh -c "
+      sed -i 's|http://localhost:6020|http://10.11.53.10:6020|g' /usr/share/nginx/html/static/js/*.js
+      exec nginx -g 'daemon off;'
+      "
 
 volumes:
   postgres_data:
