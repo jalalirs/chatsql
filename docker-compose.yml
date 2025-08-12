@@ -19,8 +19,23 @@ services:
       timeout: 5s
       retries: 5
 
+  mssql:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    environment:
+      - ACCEPT_EULA=1
+      - MSSQL_SA_PASSWORD=l.messi10
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+      - ./backend/scripts/create_test_db.sql:/docker-entrypoint-initdb.d/create_test_db.sql
+
   backend:
-    image: jalalirs/tex2sql-backend:latest # <--- Pulls from Docker Hub
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
     env_file:
       - .env
     environment:
@@ -38,18 +53,22 @@ services:
     command: python /app/patch-cors.py  # Override the command
 
   frontend:
-    image: jalalirs/tex2sql-frontend:latest # <--- Pulls from Docker Hub
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+
     ports:
       - "3000:3000"
     depends_on:
       - backend
     environment:
-      - REACT_APP_API_URL=http://10.11.53.10:6020
+      - REACT_APP_API_URL=http://localhost:6020
     command: |
       sh -c "
-      sed -i 's|http://localhost:6020|http://10.11.53.10:6020|g' /usr/share/nginx/html/static/js/*.js
+      sed -i 's|http://localhost:6020|http://localhost:6020|g' /usr/share/nginx/html/static/js/*.js
       exec nginx -g 'daemon off;'
       "
 
 volumes:
   postgres_data:
+  mssql_data:

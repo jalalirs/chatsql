@@ -92,7 +92,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
   
       // Connect to SSE stream for test results
       if (taskId) {
-        const streamUrl = `http://${API_BASE_URL}$:6020/events/stream/${taskId}`;
+        const streamUrl = `${API_BASE_URL}/events/stream/${taskId}`;
         console.log('🔗 Connecting to SSE stream:', streamUrl);
         
         const eventSource = new EventSource(streamUrl);

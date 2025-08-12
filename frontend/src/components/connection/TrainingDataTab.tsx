@@ -86,7 +86,7 @@ export const TrainingDataTab: React.FC<TrainingDataTabProps> = ({ connection, on
       if (result.stream_url) {
         const fullStreamUrl = result.stream_url.startsWith('http') 
           ? result.stream_url 
-          : `http://${API_BASE_URL}$:6020${result.stream_url}`;
+          : `${API_BASE_URL}${result.stream_url}`;
         
         const eventSource = new EventSource(fullStreamUrl);
         

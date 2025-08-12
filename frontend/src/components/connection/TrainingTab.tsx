@@ -34,7 +34,7 @@ const TrainingTab: React.FC<TrainingTabProps> = ({ connection, onConnectionUpdat
       if (result.stream_url) {
         const fullStreamUrl = result.stream_url.startsWith('http') 
           ? result.stream_url 
-          : `http://${API_BASE_URL}$:6020${result.stream_url}`;
+          : `${API_BASE_URL}${result.stream_url}`;
         
         console.log('🔗 Connecting to training SSE stream:', fullStreamUrl);
         

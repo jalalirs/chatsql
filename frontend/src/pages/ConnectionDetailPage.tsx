@@ -237,7 +237,7 @@ const DetailsTab: React.FC<{ connection: Connection; onConnectionUpdate: (connec
       if (response.data.stream_url) {
         const fullStreamUrl = response.data.stream_url.startsWith('http') 
           ? response.data.stream_url 
-          : `http://${API_BASE_URL}$:6020${response.data.stream_url}`;
+          : `${API_BASE_URL}${response.data.stream_url}`;
         
         console.log('Connecting to SSE:', fullStreamUrl);
         
@@ -645,7 +645,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
       if (result.stream_url) {
         const fullStreamUrl = result.stream_url.startsWith('http') 
           ? result.stream_url 
-          : `http://${API_BASE_URL}$:6020${result.stream_url}`;
+          : `${API_BASE_URL}${result.stream_url}`;
         
         console.log('🔗 Connecting to generation SSE stream:', fullStreamUrl);
         
