@@ -36,6 +36,21 @@ message_type_enum = ENUM(
     name='message_type'
 )
 
+# NEW: Model-related ENUMs
+model_status_enum = ENUM(
+    'draft', 'active', 'archived', 'training', 'trained', 'training_failed',
+    name='model_status'
+)
+
+# NEW: ModelStatus class for compatibility
+class ModelStatus(str, Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    TRAINING = "training"
+    TRAINED = "trained"
+    TRAINING_FAILED = "training_failed"
+
 from app.models.schemas import ConnectionStatus
 
 # NEW: Conversation Management
@@ -102,6 +117,7 @@ class User(Base):
     # Relationships
     connections = relationship("Connection", back_populates="user", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
+    models = relationship("Model", back_populates="user", cascade="all, delete-orphan")
 
 
 # NEW: Message Management
@@ -151,7 +167,6 @@ class Connection(Base):
     database_name = Column(String(255), nullable=False)
     username = Column(String(255), nullable=False)
     password = Column(Text, nullable=False)  # Will be encrypted
-    table_name = Column(String(255), nullable=False)
     driver = Column(String(200), nullable=True)
     encrypt = Column(Boolean, default=False)  # NEW: Encrypt connection
     trust_server_certificate = Column(Boolean, default=True)  # NEW: Trust server certificate
@@ -163,11 +178,9 @@ class Connection(Base):
     test_error_message = Column(Text)
     sample_data = Column(JSONB)
     
-    # Training data
-    column_descriptions_uploaded = Column(Boolean, default=False)
-    initial_prompt = Column(Text)
-    column_info = Column(JSONB)
-    generated_examples_count = Column(Integer, default=0)
+    # Database-level fields (NEW)
+    database_schema = Column(JSONB)  # Store discovered schema
+    last_schema_refresh = Column(DateTime(timezone=True))
     
     # Usage analytics
     total_queries = Column(Integer, default=0)
@@ -180,42 +193,16 @@ class Connection(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    trained_at = Column(DateTime(timezone=True))
     
     # Relationships
     user = relationship("User", back_populates="connections")
     conversations = relationship("Conversation", back_populates="connection", cascade="all, delete-orphan")
-    training_documentation = relationship("TrainingDocumentation", back_populates="connection", cascade="all, delete-orphan")
-    training_question_sql = relationship("TrainingQuestionSql", back_populates="connection", cascade="all, delete-orphan")  
-    training_column_schema = relationship("TrainingColumnSchema", back_populates="connection", cascade="all, delete-orphan")
+    models = relationship("Model", back_populates="connection", cascade="all, delete-orphan")
     
     # Add composite unique constraint for user_id + name
     __table_args__ = (
         {"schema": None},  # Explicit schema
     )
-
-
-class ColumnDescription(Base):
-    __tablename__ = "column_descriptions"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    connection_id = Column(UUID(as_uuid=True), ForeignKey("connections.id"), nullable=False, index=True)
-    column_name = Column(String(255), nullable=False)
-    description = Column(Text)
-    
-    # Auto-generated from schema analysis
-    data_type = Column(String(100))
-    variable_range = Column(Text)
-
-
-class TrainingExample(Base):
-    __tablename__ = "training_examples"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    connection_id = Column(UUID(as_uuid=True), ForeignKey("connections.id"), nullable=False, index=True)
-    question = Column(Text, nullable=False)
-    sql = Column(Text, nullable=False)
-    generated_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class TrainingTask(Base):
@@ -286,100 +273,121 @@ class PasswordResetToken(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
-# Add these new classes to models/database.py
-
-class TrainingDocumentation(Base):
-    __tablename__ = "training_documentation"
+# NEW: Model-related tables
+class Model(Base):
+    __tablename__ = "models"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     connection_id = Column(UUID(as_uuid=True), ForeignKey("connections.id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     
-    # Documentation details
-    title = Column(String(255), nullable=False)
-    doc_type = Column(String(100), nullable=False)  # e.g., "general", "mssql_conventions", "table_info"
-    content = Column(Text, nullable=False)
-    
-    # Ordering and categorization
-    category = Column(String(100), nullable=True)  # For grouping docs
-    order_index = Column(Integer, default=0)  # For ordering within category
-    
-    # Status
-    is_active = Column(Boolean, default=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(model_status_enum, default='draft')
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Relationship
-    connection = relationship("Connection", back_populates="training_documentation")
+    # Relationships
+    connection = relationship("Connection", back_populates="models")
+    user = relationship("User", back_populates="models")
+    tracked_tables = relationship("ModelTrackedTable", back_populates="model", cascade="all, delete-orphan")
+    training_documentation = relationship("ModelTrainingDocumentation", back_populates="model", cascade="all, delete-orphan")
+    training_questions = relationship("ModelTrainingQuestion", back_populates="model", cascade="all, delete-orphan")
+    training_columns = relationship("ModelTrainingColumn", back_populates="model", cascade="all, delete-orphan")
 
 
-class TrainingQuestionSql(Base):
-    __tablename__ = "training_question_sql"
+class ModelTrackedTable(Base):
+    __tablename__ = "model_tracked_tables"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    connection_id = Column(UUID(as_uuid=True), ForeignKey("connections.id"), nullable=False, index=True)
+    model_id = Column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=False, index=True)
     
-    # Question-SQL pair
+    table_name = Column(String(255), nullable=False)
+    schema_name = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    model = relationship("Model", back_populates="tracked_tables")
+    tracked_columns = relationship("ModelTrackedColumn", back_populates="tracked_table", cascade="all, delete-orphan")
+
+
+class ModelTrackedColumn(Base):
+    __tablename__ = "model_tracked_columns"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    model_tracked_table_id = Column(UUID(as_uuid=True), ForeignKey("model_tracked_tables.id"), nullable=False, index=True)
+    
+    column_name = Column(String(255), nullable=False)
+    is_tracked = Column(Boolean, default=True)
+    description = Column(Text, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    tracked_table = relationship("ModelTrackedTable", back_populates="tracked_columns")
+
+
+class ModelTrainingDocumentation(Base):
+    __tablename__ = "model_training_documentation"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    model_id = Column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=False, index=True)
+    
+    title = Column(String(255), nullable=False)
+    doc_type = Column(String(100), nullable=False)
+    content = Column(Text, nullable=False)
+    category = Column(String(100), nullable=True)
+    order_index = Column(Integer, default=0)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    model = relationship("Model", back_populates="training_documentation")
+
+
+class ModelTrainingQuestion(Base):
+    __tablename__ = "model_training_questions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    model_id = Column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=False, index=True)
+    
     question = Column(Text, nullable=False)
     sql = Column(Text, nullable=False)
-    
-    # Generation info
-    generated_by = Column(String(50), default="ai")  # "ai", "manual", "imported"
-    generation_model = Column(String(100), nullable=True)  # Which AI model generated it
-    
-    # Quality and validation
-    is_validated = Column(Boolean, default=False)  # Has been manually reviewed
     validation_notes = Column(Text, nullable=True)
     
-    # Status
-    is_active = Column(Boolean, default=True)
-    
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Relationship
-    connection = relationship("Connection", back_populates="training_question_sql")
+    # Relationships
+    model = relationship("Model", back_populates="training_questions")
 
 
-class TrainingColumnSchema(Base):
-    __tablename__ = "training_column_schema"
+class ModelTrainingColumn(Base):
+    __tablename__ = "model_training_columns"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    connection_id = Column(UUID(as_uuid=True), ForeignKey("connections.id"), nullable=False, index=True)
+    model_id = Column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=False, index=True)
     
-    # Column information
+    table_name = Column(String(255), nullable=False)
     column_name = Column(String(255), nullable=False)
     data_type = Column(String(100), nullable=False)
-    
-    # Enhanced description and metadata
     description = Column(Text, nullable=True)
-    value_range = Column(Text, nullable=True)  # String describing the value range/format/categories etc.
-    
-    # Generation info
-    description_source = Column(String(50), default="manual")  # "manual", "ai", "csv_upload"
-    
-    # Status
+    value_range = Column(Text, nullable=True)
+    description_source = Column(String(50), default='manual')
     is_active = Column(Boolean, default=True)
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Relationship
-    connection = relationship("Connection", back_populates="training_column_schema")
-    
-    # Unique constraint
-    __table_args__ = (
-        {"schema": None},
-    )
-
-
-# Update the Connection class to add the new relationships
-# Add these lines to the Connection class:
-
-# Add to Connection class relationships section:
-training_documentation = relationship("TrainingDocumentation", back_populates="connection", cascade="all, delete-orphan")
-training_question_sql = relationship("TrainingQuestionSql", back_populates="connection", cascade="all, delete-orphan")  
-training_column_schema = relationship("TrainingColumnSchema", back_populates="connection", cascade="all, delete-orphan")
+    # Relationships
+    model = relationship("Model", back_populates="training_columns")

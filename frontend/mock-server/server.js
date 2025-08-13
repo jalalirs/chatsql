@@ -141,9 +141,9 @@ function testSQLConnection(connectionData) {
 
       console.log('Connected to MSSQL database');
 
-      // First, get sample data
-      const sampleQuery = `SELECT TOP 10 * FROM ${connectionData.table_name}`;
-      const sampleRequest = new Request(sampleQuery, (err) => {
+      // Test connection by getting database information
+      const testQuery = `SELECT TOP 1 name FROM sys.tables`;
+      const testRequest = new Request(testQuery, (err) => {
         if (err) {
           testResult.error = `Query failed: ${err.message}`;
           connection.close();
@@ -152,90 +152,23 @@ function testSQLConnection(connectionData) {
       });
 
       let sampleRows = [];
-      let columns = [];
 
-      sampleRequest.on('columnMetadata', (columnMetadata) => {
-        columns = columnMetadata.map(col => ({
-          name: col.colName,
-          type: col.type.name
-        }));
-      });
-
-      sampleRequest.on('row', (row) => {
+      testRequest.on('row', (row) => {
         const rowData = {};
         row.forEach((column, index) => {
-          rowData[columns[index].name] = column.value;
+          rowData[`column_${index}`] = column.value;
         });
         sampleRows.push(rowData);
       });
 
-      sampleRequest.on('requestCompleted', () => {
+      testRequest.on('requestCompleted', () => {
         testResult.sampleData = sampleRows;
-
-        // Now get column information
-        const columnQuery = `
-          SELECT 
-            COLUMN_NAME,
-            DATA_TYPE,
-            IS_NULLABLE,
-            CHARACTER_MAXIMUM_LENGTH,
-            NUMERIC_PRECISION,
-            NUMERIC_SCALE
-          FROM INFORMATION_SCHEMA.COLUMNS 
-          WHERE TABLE_NAME = '${connectionData.table_name.split('.').pop()}' 
-          ORDER BY ORDINAL_POSITION
-        `;
-
-        const columnRequest = new Request(columnQuery, (err) => {
-          if (err) {
-            console.warn('Could not get column info:', err.message);
-            // Continue without column info
-            testResult.success = true;
-            connection.close();
-            return resolve(testResult);
-          }
-        });
-
-        let columnRows = [];
-        let columnMetadata = [];
-
-        columnRequest.on('columnMetadata', (metadata) => {
-          columnMetadata = metadata;
-        });
-
-        columnRequest.on('row', (row) => {
-          const columnData = {};
-          row.forEach((column, index) => {
-            columnData[columnMetadata[index].colName] = column.value;
-          });
-          columnRows.push(columnData);
-        });
-
-        columnRequest.on('requestCompleted', () => {
-          // Process column information
-          columnRows.forEach(col => {
-            let typeInfo = col.DATA_TYPE;
-            if (col.CHARACTER_MAXIMUM_LENGTH) {
-              typeInfo += `(${col.CHARACTER_MAXIMUM_LENGTH})`;
-            } else if (col.NUMERIC_PRECISION) {
-              typeInfo += `(${col.NUMERIC_PRECISION}${col.NUMERIC_SCALE ? `,${col.NUMERIC_SCALE}` : ''})`;
-            }
-
-            testResult.columnInfo[col.COLUMN_NAME] = {
-              data_type: typeInfo,
-              variable_range: `Type: ${col.DATA_TYPE}${col.IS_NULLABLE === 'YES' ? ' (nullable)' : ''}`
-            };
-          });
-
-          testResult.success = true;
-          connection.close();
-          resolve(testResult);
-        });
-
-        connection.execSql(columnRequest);
+        testResult.success = true;
+        connection.close();
+        resolve(testResult);
       });
 
-      connection.execSql(sampleRequest);
+      connection.execSql(testRequest);
     });
 
     connection.on('error', (err) => {
@@ -335,11 +268,11 @@ server.get('/connections/:id', (req, res) => {
 // Replace the connection creation endpoint in mock-server/server.js
 
 server.post('/connections', async (req, res) => {
-  const { name, server: serverHost, database_name, username, password, table_name, driver } = req.body;
+  const { name, server: serverHost, database_name, username, password, driver } = req.body;
   
-  if (!name || !serverHost || !database_name || !username || !password || !table_name) {
+  if (!name || !serverHost || !database_name || !username || !password) {
     return res.status(400).json({ 
-      detail: 'Missing required fields: name, server, database_name, username, password, table_name' 
+      detail: 'Missing required fields: name, server, database_name, username, password' 
     });
   }
 
@@ -360,8 +293,7 @@ server.post('/connections', async (req, res) => {
       server: serverHost,
       database_name,
       username,
-      password,
-      table_name
+      password
     });
 
     if (!testResult.success) {
@@ -378,16 +310,13 @@ server.post('/connections', async (req, res) => {
       name: name,
       server: serverHost,
       database_name: database_name,
-      table_name: table_name,
       driver: driver || 'ODBC Driver 18 for SQL Server',
       status: 'test_success',
       test_successful: true,
-      column_descriptions_uploaded: false,
-      generated_examples_count: 0,
       total_queries: 0,
       last_queried_at: null,
       created_at: new Date().toISOString(),
-      trained_at: null,
+      updated_at: new Date().toISOString(),
       user_id: 'user-123'
     };
 
@@ -399,11 +328,11 @@ server.post('/connections', async (req, res) => {
       connection_id: newConnection.id,
       last_refreshed: new Date().toISOString(),
       table_info: {
-        total_columns: Object.keys(testResult.columnInfo).length,
-        sample_rows: testResult.sampleData.length
+        total_columns: Object.keys(testResult.columnInfo || {}).length,
+        sample_rows: (testResult.sampleData || []).length
       },
-      columns: testResult.columnInfo,
-      sample_data: testResult.sampleData.slice(0, 5)
+      columns: testResult.columnInfo || {},
+      sample_data: (testResult.sampleData || []).slice(0, 5)
     };
     
     // Store schema data immediately
@@ -465,8 +394,7 @@ server.post('/connections/:id/refresh-schema', async (req, res) => {
       server: connection.server,
       database_name: connection.database_name,
       username: 'sa',
-      password: 'l.messi10',
-      table_name: connection.table_name
+      password: 'l.messi10'
     });
 
     if (testResult.success) {
@@ -930,7 +858,7 @@ server.get('/connections/:id/training-data', (req, res) => {
   res.json({
     connection_id: connectionId,
     connection_name: connection.name,
-    initial_prompt: `You are a Microsoft SQL Server expert specializing in the ${connection.table_name} table.`,
+    initial_prompt: `You are a Microsoft SQL Server expert specializing in the ${connection.database_name} database.`,
     column_descriptions: [],
     generated_examples: trainingData.examples,
     total_examples: trainingData.total_examples,
@@ -1157,7 +1085,7 @@ server.post('/conversations/query', (req, res) => {
   const trainingData = mockTrainingData.get(selectedConnectionId);
   
   // Get smart response based on training data
-  let generatedSQL = `SELECT TOP 10 * FROM ${connection.table_name} ORDER BY 1 DESC`;
+  let generatedSQL = `SELECT TOP 10 * FROM sys.tables`;
   let sampleData = [
     { Result: "Sample data from " + connection.name, Count: 1 },
     { Result: "Mock response", Count: 2 },

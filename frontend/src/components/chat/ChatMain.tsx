@@ -41,7 +41,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   useEffect(() => {
     if (location.state?.selectedConnectionId && connections.length > 0) {
       const connection = connections.find(c => c.id === location.state.selectedConnectionId);
-      if (connection && connection.status === 'trained') {
+      if (connection && connection.status === 'test_success') {
         setSelectedConnection(connection);
         // Clear the navigation state to prevent re-selection
         window.history.replaceState({}, document.title);
@@ -57,12 +57,12 @@ export const ChatMain: React.FC<ChatMainProps> = ({
     loadConnections();
   }, []);
 
-  // Auto-select connection if only one trained connection exists
+  // Auto-select connection if only one available connection exists
   useEffect(() => {
-    const trainedConnections = connections.filter(conn => conn.status === 'trained');
-    if (trainedConnections.length === 1 && !selectedConnection) {
-      setSelectedConnection(trainedConnections[0]);
-    } else if (trainedConnections.length === 0) {
+    const availableConnections = connections.filter(conn => conn.status === 'test_success');
+    if (availableConnections.length === 1 && !selectedConnection) {
+      setSelectedConnection(availableConnections[0]);
+    } else if (availableConnections.length === 0) {
       setSelectedConnection(null);
     }
   }, [connections, selectedConnection]);
@@ -510,8 +510,8 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   };
 
   // Check if chat should be disabled
-  const trainedConnections = connections.filter(conn => conn.status === 'trained');
-  const isChatDisabled = trainedConnections.length === 0;
+  const availableConnections = connections.filter(conn => conn.status === 'test_success');
+  const isChatDisabled = availableConnections.length === 0;
 
   return (
     <div className="flex-1 flex flex-col">

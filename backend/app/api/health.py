@@ -247,7 +247,6 @@ async def vanna_health_check(
                     database_name=full_connection.database_name,
                     username=full_connection.username,
                     password=full_connection.password,
-                    table_name=full_connection.table_name,
                     driver=full_connection.driver,
                     encrypt=full_connection.encrypt,
                     trust_server_certificate=full_connection.trust_server_certificate

@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Database, CheckCircle, AlertCircle, Clock, Zap, Play, Upload, Settings, FileText, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Database, CheckCircle, AlertCircle, Clock, Zap, Play, Upload, Settings, FileText, RefreshCw, Brain } from 'lucide-react';
 import { Connection } from '../types/chat';
 import { chatService } from '../services/chat';
 import { sseConnection } from '../services/sse';
 import { trainingService } from '../services/training';
 import { api } from '../services/auth';
-import { DocumentationTab } from '../components/connection/DocumentationTab';
-import { TrainingDataTab as TrainingDataTabComponent } from '../components/connection/TrainingDataTab';
-import { TrainingTab as TrainingTabComponent } from '../components/connection/TrainingTab';
+
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:6020';
 
@@ -58,16 +56,12 @@ export const ConnectionDetailPage: React.FC = () => {
 
   const getStatusInfo = (status: string) => {
     switch (status) {
-      case 'trained':
-        return { icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100', text: 'Trained' };
-      case 'training':
-        return { icon: Zap, color: 'text-yellow-600', bg: 'bg-yellow-100', text: 'Training' };
-      case 'data_generated':
-        return { icon: Play, color: 'text-blue-600', bg: 'bg-blue-100', text: 'Ready to Train' };
       case 'test_success':
-        return { icon: CheckCircle, color: 'text-blue-600', bg: 'bg-blue-100', text: 'Connected' };
-      case 'generating_data':
-        return { icon: Clock, color: 'text-yellow-600', bg: 'bg-yellow-100', text: 'Generating Data' };
+        return { icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100', text: 'Connected' };
+      case 'test_failed':
+        return { icon: AlertCircle, color: 'text-red-600', bg: 'bg-red-100', text: 'Failed' };
+      case 'connecting':
+        return { icon: Clock, color: 'text-blue-600', bg: 'bg-blue-100', text: 'Testing' };
       default:
         return { icon: AlertCircle, color: 'text-gray-600', bg: 'bg-gray-100', text: 'Unknown' };
     }
@@ -75,10 +69,7 @@ export const ConnectionDetailPage: React.FC = () => {
 
   const tabs = [
     { id: 'details', label: 'Details', icon: Database, description: 'Connection information and settings' },
-    { id: 'schema-descriptions', label: 'Schema & Descriptions', icon: Settings, description: 'Table structure and column descriptions' },
-    { id: 'documentation', label: 'Documentation', icon: FileText, description: 'General documentation and guides' },
-    { id: 'training-data', label: 'Training Data', icon: Play, description: 'Question-SQL pairs and examples' },
-    { id: 'training', label: 'Training', icon: Zap, description: 'Train and manage AI model' }
+    { id: 'schema-descriptions', label: 'Schema & Descriptions', icon: Settings, description: 'Table structure and column descriptions' }
   ];
 
   if (loading) {
@@ -119,12 +110,6 @@ export const ConnectionDetailPage: React.FC = () => {
         return <DetailsTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       case 'schema-descriptions':
         return <SchemaDescriptionsTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
-      case 'documentation':
-        return <DocumentationTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
-      case 'training-data':
-        return <TrainingDataTabComponent connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
-      case 'training':
-        return <TrainingTabComponent connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       default:
         return null;
     }
@@ -161,18 +146,14 @@ export const ConnectionDetailPage: React.FC = () => {
             
             {/* Right side with actions and status */}
             <div className="flex items-center gap-3">
-              {/* Use in Chat button if trained */}
-              {connection.status === 'trained' && (
-                <button
-                  onClick={() => navigate('/', { state: { selectedConnectionId: connection.id } })}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  <svg width={16} height={16} fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
-                  </svg>
-                  Use in Chat
-                </button>
-              )}
+              {/* Create Model button */}
+              <button
+                onClick={() => navigate('/models', { state: { createFromConnection: connection.id } })}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                <Brain size={16} />
+                Create Model
+              </button>
               
               {/* Status badge */}
               <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${statusInfo.bg} ${statusInfo.color}`}>
@@ -393,10 +374,6 @@ const DetailsTab: React.FC<{ connection: Connection; onConnectionUpdate: (connec
             <div className="p-3 bg-gray-50 rounded-lg text-gray-900">{connection.database_name}</div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Table</label>
-            <div className="p-3 bg-gray-50 rounded-lg text-gray-900">{connection.table_name}</div>
-          </div>
-          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Driver</label>
             <div className="p-3 bg-gray-50 rounded-lg text-gray-900">{connection.driver}</div>
           </div>
@@ -411,34 +388,32 @@ const DetailsTab: React.FC<{ connection: Connection; onConnectionUpdate: (connec
 
       {/* Statistics */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Usage Statistics</h2>
+        <h2 className="text-lg font-medium text-gray-900 mb-4">Connection Information</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{connection.total_queries}</div>
-            <div className="text-sm text-gray-500">Total Queries</div>
+            <div className="text-2xl font-bold text-blue-600">{connection.database_name}</div>
+            <div className="text-sm text-gray-500">Database</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">{connection.generated_examples_count}</div>
-            <div className="text-sm text-gray-500">Training Examples</div>
+            <div className="text-2xl font-bold text-green-600">{connection.driver}</div>
+            <div className="text-sm text-gray-500">Driver</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600">
-              {connection.column_descriptions_uploaded ? 'Yes' : 'No'}
-            </div>
-            <div className="text-sm text-gray-500">Column Descriptions</div>
+            <div className="text-2xl font-bold text-purple-600">{connection.server}</div>
+            <div className="text-sm text-gray-500">Server</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-orange-600">
-              {connection.last_queried_at ? new Date(connection.last_queried_at).toLocaleDateString() : 'Never'}
+              {new Date(connection.created_at).toLocaleDateString()}
             </div>
-            <div className="text-sm text-gray-500">Last Queried</div>
+            <div className="text-sm text-gray-500">Created</div>
           </div>
         </div>
       </div>
 
-      {/* Training Timeline */}
+      {/* Connection Timeline */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Training Timeline</h2>
+        <h2 className="text-lg font-medium text-gray-900 mb-4">Connection Timeline</h2>
         <div className="space-y-4">
           <div className="flex items-center gap-4">
             <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
@@ -454,11 +429,11 @@ const DetailsTab: React.FC<{ connection: Connection; onConnectionUpdate: (connec
           
           <div className="flex items-center gap-4">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-              connection.generated_examples_count > 0 
+              connection.status === 'test_success' 
                 ? 'bg-green-100' 
                 : 'bg-gray-100'
             }`}>
-              {connection.generated_examples_count > 0 ? (
+              {connection.status === 'test_success' ? (
                 <CheckCircle size={16} className="text-green-600" />
               ) : (
                 <Clock size={16} className="text-gray-400" />
@@ -466,41 +441,14 @@ const DetailsTab: React.FC<{ connection: Connection; onConnectionUpdate: (connec
             </div>
             <div className="flex-1">
               <div className={`font-medium ${
-                connection.generated_examples_count > 0 ? 'text-gray-900' : 'text-gray-500'
+                connection.status === 'test_success' ? 'text-gray-900' : 'text-gray-500'
               }`}>
-                Training Data Generated (Optional)
+                Connection Tested
               </div>
               <div className="text-sm text-gray-500">
-                {connection.generated_examples_count > 0 
-                  ? `${connection.generated_examples_count} examples created`
-                  : 'Can train with schema only'
-                }
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-              connection.status === 'trained' 
-                ? 'bg-green-100' 
-                : 'bg-gray-100'
-            }`}>
-              {connection.status === 'trained' ? (
-                <CheckCircle size={16} className="text-green-600" />
-              ) : (
-                <Clock size={16} className="text-gray-400" />
-              )}
-            </div>
-            <div className="flex-1">
-              <div className={`font-medium ${
-                connection.status === 'trained' ? 'text-gray-900' : 'text-gray-500'
-              }`}>
-                Model Training Completed
-              </div>
-              <div className="text-sm text-gray-500">
-                {connection.trained_at 
-                  ? new Date(connection.trained_at).toLocaleString()
-                  : 'Ready to train'
+                {connection.status === 'test_success' 
+                  ? 'Connection is working properly'
+                  : 'Ready to test connection'
                 }
               </div>
             </div>
@@ -687,7 +635,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
               // Update connection status
               onConnectionUpdate({
                 ...connection,
-                column_descriptions_uploaded: true
+                status: 'test_success'
               });
               
               // Reload descriptions immediately
@@ -706,7 +654,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
             // Update connection status
             onConnectionUpdate({
               ...connection,
-              column_descriptions_uploaded: true
+              status: 'test_success'
             });
             
             // Reload descriptions
@@ -756,7 +704,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
                 // Update connection status
                 onConnectionUpdate({
                   ...connection,
-                  column_descriptions_uploaded: true
+                  status: 'test_success'
                 });
                 return;
               }
@@ -811,7 +759,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
       // Update connection status
       onConnectionUpdate({
         ...connection,
-        column_descriptions_uploaded: true
+        status: 'test_success'
       });
 
     } catch (err: any) {
@@ -955,7 +903,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
           <div>
             <h2 className="text-lg font-medium text-gray-900">Schema & Descriptions</h2>
             <p className="text-gray-600">
-              Table structure and column descriptions for <strong>{connection.table_name}</strong>
+              Table structure and column descriptions for <strong>{connection.database_name}</strong>
             </p>
           </div>
           

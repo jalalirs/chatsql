@@ -13,19 +13,11 @@ class ConnectionStatus(str, Enum):
     TESTING = "testing"
     TEST_SUCCESS = "test_success"
     TEST_FAILED = "test_failed"
-    GENERATING_DATA = "generating_data"
-    DATA_GENERATED = "data_generated"
-    TRAINING = "training"
-    TRAINED = "trained"
-    TRAINING_FAILED = "training_failed"
 
 class TaskType(str, Enum):
     TEST_CONNECTION = "test_connection"
-    GENERATE_DATA = "generate_data"
-    TRAIN_MODEL = "train_model"
     QUERY = "query"
     REFRESH_SCHEMA = "refresh_schema"  
-    GENERATE_COLUMN_DESCRIPTIONS = "generate_column_descriptions"  
 
 
 class TaskStatus(str, Enum):
@@ -146,7 +138,6 @@ class ConnectionCreate(BaseModel):
     database_name: str = Field(..., min_length=1, description="Database name")
     username: str = Field(..., min_length=1, description="Database username")
     password: str = Field(..., min_length=1, description="Database password")
-    table_name: str = Field(..., min_length=1, description="Full table name (schema.table)")
     driver: Optional[str] = Field(None, description="Database driver")
     encrypt: Optional[bool] = Field(False, description="Whether to encrypt the connection")
     trust_server_certificate: Optional[bool] = Field(True, description="Whether to trust server certificate")
@@ -166,18 +157,17 @@ class ConnectionResponse(BaseModel):
     name: str
     server: str
     database_name: str
-    table_name: str
     driver: Optional[str] = None
     encrypt: bool = False
     trust_server_certificate: bool = True
     status: ConnectionStatus
     test_successful: bool
-    column_descriptions_uploaded: bool
-    generated_examples_count: int
+    database_schema: Optional[Dict[str, Any]] = None
+    last_schema_refresh: Optional[datetime] = None
     total_queries: int = 0
     last_queried_at: Optional[datetime] = None
     created_at: datetime
-    trained_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -190,49 +180,7 @@ class ConnectionDeleteResponse(BaseModel):
     success: bool
     message: str
 
-# Add these schemas to app/models/schemas.py
 
-class SchemaRefreshResponse(BaseModel):
-    """Response for schema refresh operation"""
-    task_id: str
-    connection_id: str
-    status: str
-    stream_url: str
-    message: str = "Schema refresh started"
-
-class ConnectionSchemaResponse(BaseModel):
-    """Response for connection schema"""
-    connection_id: str
-    connection_name: str
-    schema: Dict[str, Any]
-    last_refreshed: Optional[str]
-    total_columns: int
-
-class ColumnInfo(BaseModel):
-    """Column information with all details"""
-    column_name: str
-    data_type: str
-    variable_range: str = ""
-    description: str = ""
-    has_description: bool = False
-    categories: Optional[List[str]] = None
-    range: Optional[Dict[str, float]] = None
-    date_range: Optional[Dict[str, str]] = None
-
-class ColumnDescriptionsResponse(BaseModel):
-    """Response for column descriptions"""
-    connection_id: str
-    connection_name: str
-    column_descriptions: List[ColumnInfo]
-    total_columns: int
-    has_descriptions: bool
-
-class UpdateColumnDescriptionsResponse(BaseModel):
-    """Response for updating column descriptions"""
-    success: bool
-    message: str
-    connection_id: str
-    total_columns: int
 
 
 
@@ -390,209 +338,83 @@ class SuggestedQuestionsResponse(BaseModel):
 
 
 # ========================
-# TRAINING SCHEMAS
+# CONNECTION SCHEMA DISCOVERY
 # ========================
 
-class ColumnDescriptionItem(BaseModel):
-    column_name: str
-    data_type: Optional[str] = None
-    variable_range: Optional[str] = None
-    description: Optional[str] = None
+class SchemaRefreshRequest(BaseModel):
+    connection_id: str = Field(..., description="Connection UUID to refresh schema")
 
-class TrainingDataView(BaseModel):
+class SchemaRefreshResponse(BaseModel):
+    """Response for schema refresh operation"""
+    task_id: str
+    connection_id: str
+    status: str
+    stream_url: str
+    message: str = "Schema refresh started"
+
+class ConnectionSchemaResponse(BaseModel):
+    """Response for connection schema"""
     connection_id: str
     connection_name: str
-    initial_prompt: str
-    column_descriptions: List[ColumnDescriptionItem]
-    generated_examples: List[Dict[str, str]] = []
-    total_examples: int = 0
-
-class GenerateExamplesRequest(BaseModel):
-    num_examples: int = Field(default=20, ge=1, le=100, description="Number of training examples to generate")
-
-class TrainingExampleResponse(BaseModel):
-    id: str
-    question: str
-    sql: str
-    generated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-class ConnectionAddRequest(BaseModel):
-    connection_data: ConnectionCreate
-    column_descriptions: Optional[List[ColumnDescriptionItem]] = None
-    generate_examples: bool = True
-    num_examples: int = Field(default=20, ge=1, le=100)
-
-class TrainModelRequest(BaseModel):
-    connection_id: str = Field(..., description="Connection UUID to train")
-
-
-# ========================
-# TRAINING DATA SCHEMAS
-# ========================
-
-class TrainingDocumentationCreate(BaseModel):
-    title: str = Field(..., min_length=1, max_length=255)
-    doc_type: str = Field(..., min_length=1, max_length=100)
-    content: str = Field(..., min_length=1)
-    category: Optional[str] = Field(None, max_length=100)
-    order_index: int = Field(default=0, ge=0)
-
-class TrainingDocumentationUpdate(BaseModel):
-    title: Optional[str] = Field(None, min_length=1, max_length=255)
-    doc_type: Optional[str] = Field(None, min_length=1, max_length=100)
-    content: Optional[str] = Field(None, min_length=1)
-    category: Optional[str] = Field(None, max_length=100)
-    order_index: Optional[int] = Field(None, ge=0)
-    is_active: Optional[bool] = None
-
-class TrainingDocumentationResponse(BaseModel):
-    id: str
-    connection_id: str
-    title: str
-    doc_type: str
-    content: str
-    category: Optional[str] = None
-    order_index: int
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-class TrainingQuestionSqlCreate(BaseModel):
-    question: str = Field(..., min_length=1)
-    sql: str = Field(..., min_length=1)
-    generated_by: str = Field(default="manual", max_length=50)
-    generation_model: Optional[str] = Field(None, max_length=100)
-    is_validated: bool = Field(default=False)
-    validation_notes: Optional[str] = None
-
-class TrainingQuestionSqlUpdate(BaseModel):
-    question: Optional[str] = Field(None, min_length=1)
-    sql: Optional[str] = Field(None, min_length=1)
-    generated_by: Optional[str] = Field(None, max_length=50)
-    generation_model: Optional[str] = Field(None, max_length=100)
-    is_validated: Optional[bool] = None
-    validation_notes: Optional[str] = None
-    is_active: Optional[bool] = None
-
-class TrainingQuestionSqlResponse(BaseModel):
-    id: str
-    connection_id: str
-    question: str
-    sql: str
-    generated_by: str
-    generation_model: Optional[str] = None
-    is_validated: bool
-    validation_notes: Optional[str] = None
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-class TrainingColumnSchemaCreate(BaseModel):
-    column_name: str = Field(..., min_length=1, max_length=255)
-    data_type: str = Field(..., min_length=1, max_length=100)
-    description: Optional[str] = None
-    value_range: Optional[str] = None
-    description_source: str = Field(default="manual", max_length=50)
-
-class TrainingColumnSchemaUpdate(BaseModel):
-    column_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    data_type: Optional[str] = Field(None, min_length=1, max_length=100)
-    description: Optional[str] = None
-    value_range: Optional[str] = None
-    description_source: Optional[str] = Field(None, max_length=50)
-    is_active: Optional[bool] = None
-
-class TrainingColumnSchemaResponse(BaseModel):
-    id: str
-    connection_id: str
-    column_name: str
-    data_type: str
-    description: Optional[str] = None
-    value_range: Optional[str] = None
-    description_source: str
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-# ========================
-# TRAINING DATA LIST RESPONSES
-# ========================
-
-class TrainingDocumentationListResponse(BaseModel):
-    documentation: List[TrainingDocumentationResponse]
-    total: int
-    connection_id: str
-
-class TrainingQuestionSqlListResponse(BaseModel):
-    questions: List[TrainingQuestionSqlResponse]
-    total: int
-    connection_id: str
-
-class TrainingColumnSchemaListResponse(BaseModel):
-    columns: List[TrainingColumnSchemaResponse]
-    total: int
-    connection_id: str
-
-# ========================
-# BULK OPERATIONS
-# ========================
-
-class TrainingDocumentationBulkCreate(BaseModel):
-    documentation: List[TrainingDocumentationCreate]
-
-class TrainingQuestionSqlBulkCreate(BaseModel):
-    questions: List[TrainingQuestionSqlCreate]
-
-class TrainingColumnSchemaBulkCreate(BaseModel):
-    columns: List[TrainingColumnSchemaCreate]
-
-# ========================
-# GENERATION REQUESTS
-# ========================
-
-class GenerateColumnDescriptionsRequest(BaseModel):
-    use_ai: bool = Field(default=True)
-    overwrite_existing: bool = Field(default=True)
-
-class GenerateDocumentationRequest(BaseModel):
-    doc_types: List[str] = Field(default=["mssql_conventions", "table_info"])
-    overwrite_existing: bool = Field(default=False)
-
-# ========================
-# UPDATED TRAINING DATA VIEW
-# ========================
-
-class TrainingDataViewResponse(BaseModel):
-    connection_id: str
-    connection_name: str
-    documentation: List[TrainingDocumentationResponse]
-    question_sql_pairs: List[TrainingQuestionSqlResponse]
-    column_schema: List[TrainingColumnSchemaResponse]
-    total_documentation: int
-    total_questions: int
+    schema: Dict[str, Any]
+    last_refreshed: Optional[str]
+    total_tables: int
     total_columns: int
 
+
 # ========================
-# DELETE RESPONSES
+# COLUMN INFORMATION SCHEMAS
 # ========================
 
-class TrainingItemDeleteResponse(BaseModel):
+class ColumnInfo(BaseModel):
+    """Column information with all details"""
+    column_name: str
+    data_type: str
+    variable_range: str = ""
+    description: str = ""
+    has_description: bool = False
+    categories: Optional[List[str]] = None
+    range: Optional[Dict[str, float]] = None
+    date_range: Optional[Dict[str, str]] = None
+
+class ColumnDescriptionsResponse(BaseModel):
+    """Response for column descriptions"""
+    connection_id: str
+    connection_name: str
+    column_descriptions: List[ColumnInfo]
+    total_columns: int
+    has_descriptions: bool
+
+class UpdateColumnDescriptionsResponse(BaseModel):
+    """Response for updating column descriptions"""
     success: bool
     message: str
-    item_id: str
-    item_type: str  # "documentation", "question_sql", "column_schema"
+    connection_id: str
+    total_columns: int
+
+class ColumnDescriptionUpload(BaseModel):
+    """Schema for uploading column descriptions via CSV"""
+    column: str = Field(..., min_length=1, max_length=255)
+    description: str = Field("", max_length=1000)
+
+class ColumnDescriptionItem(BaseModel):
+    """Schema for individual column description items"""
+    column_name: str = Field(..., min_length=1, max_length=255)
+    description: str = Field("", max_length=1000)
+
+# ========================
+# CONNECTION MANAGEMENT
+# ========================
+
+class ConnectionUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    server: Optional[str] = Field(None, min_length=1)
+    database_name: Optional[str] = Field(None, min_length=1)
+    username: Optional[str] = Field(None, min_length=1)
+    password: Optional[str] = Field(None, min_length=1)
+    driver: Optional[str] = None
+    encrypt: Optional[bool] = None
+    trust_server_certificate: Optional[bool] = None
 
 
 # ========================
@@ -646,10 +468,6 @@ class ConversationStatsResponse(BaseModel):
 # UTILITY SCHEMAS
 # ========================
 
-class ColumnDescriptionUpload(BaseModel):
-    column: str
-    description: str
-
 class ErrorResponse(BaseModel):
     detail: str
     error_code: Optional[str] = None
@@ -659,3 +477,221 @@ class ValidationErrorResponse(BaseModel):
     detail: List[Dict[str, Any]]
     error_code: str = "validation_error"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+# NEW: Model-related enums and schemas
+
+class ModelStatus(str, Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    TRAINING = "training"
+    TRAINED = "trained"
+    TRAINING_FAILED = "training_failed"
+
+# Model Base Schemas
+class ModelBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+
+class ModelCreate(ModelBase):
+    connection_id: uuid.UUID
+
+class ModelUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    status: Optional[ModelStatus] = None
+
+class ModelResponse(ModelBase):
+    id: uuid.UUID
+    connection_id: uuid.UUID
+    user_id: uuid.UUID
+    status: ModelStatus
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+# Model Tracked Table Schemas
+class ModelTrackedTableBase(BaseModel):
+    table_name: str = Field(..., min_length=1, max_length=255)
+    schema_name: Optional[str] = Field(None, max_length=255)
+    is_active: bool = True
+
+class ModelTrackedTableCreate(ModelTrackedTableBase):
+    pass
+
+class ModelTrackedTableUpdate(BaseModel):
+    table_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    schema_name: Optional[str] = Field(None, max_length=255)
+    is_active: Optional[bool] = None
+
+class ModelTrackedTableResponse(ModelTrackedTableBase):
+    id: uuid.UUID
+    model_id: uuid.UUID
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# Model Tracked Column Schemas
+class ModelTrackedColumnBase(BaseModel):
+    column_name: str = Field(..., min_length=1, max_length=255)
+    is_tracked: bool = True
+    description: Optional[str] = None
+
+class ModelTrackedColumnCreate(ModelTrackedColumnBase):
+    pass
+
+class ModelTrackedColumnUpdate(BaseModel):
+    column_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    is_tracked: Optional[bool] = None
+    description: Optional[str] = None
+
+class ModelTrackedColumnResponse(ModelTrackedColumnBase):
+    id: uuid.UUID
+    model_tracked_table_id: uuid.UUID
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# Model Training Documentation Schemas
+class ModelTrainingDocumentationBase(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    doc_type: str = Field(..., min_length=1, max_length=100)
+    content: str
+    category: Optional[str] = Field(None, max_length=100)
+    order_index: int = 0
+
+class ModelTrainingDocumentationCreate(ModelTrainingDocumentationBase):
+    pass
+
+class ModelTrainingDocumentationUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    doc_type: Optional[str] = Field(None, min_length=1, max_length=100)
+    content: Optional[str] = None
+    category: Optional[str] = Field(None, max_length=100)
+    order_index: Optional[int] = None
+
+class ModelTrainingDocumentationResponse(ModelTrainingDocumentationBase):
+    id: uuid.UUID
+    model_id: uuid.UUID
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+# Model Training Question Schemas
+class ModelTrainingQuestionBase(BaseModel):
+    question: str
+    sql: str
+    validation_notes: Optional[str] = None
+
+class ModelTrainingQuestionCreate(ModelTrainingQuestionBase):
+    pass
+
+class ModelTrainingQuestionUpdate(BaseModel):
+    question: Optional[str] = None
+    sql: Optional[str] = None
+    validation_notes: Optional[str] = None
+
+class ModelTrainingQuestionResponse(ModelTrainingQuestionBase):
+    id: uuid.UUID
+    model_id: uuid.UUID
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+# Model Training Column Schemas
+class ModelTrainingColumnBase(BaseModel):
+    table_name: str = Field(..., min_length=1, max_length=255)
+    column_name: str = Field(..., min_length=1, max_length=255)
+    data_type: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
+    value_range: Optional[str] = None
+    description_source: str = Field(default="manual", max_length=50)
+    is_active: bool = True
+
+class ModelTrainingColumnCreate(ModelTrainingColumnBase):
+    pass
+
+class ModelTrainingColumnUpdate(BaseModel):
+    table_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    column_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    data_type: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = None
+    value_range: Optional[str] = None
+    description_source: Optional[str] = Field(None, max_length=50)
+    is_active: Optional[bool] = None
+
+class ModelTrainingColumnResponse(ModelTrainingColumnBase):
+    id: uuid.UUID
+    model_id: uuid.UUID
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+# Comprehensive Model Response with Relationships
+class ModelDetailResponse(ModelResponse):
+    tracked_tables: List[ModelTrackedTableResponse] = []
+    training_documentation: List[ModelTrainingDocumentationResponse] = []
+    training_questions: List[ModelTrainingQuestionResponse] = []
+    training_columns: List[ModelTrainingColumnResponse] = []
+    
+    class Config:
+        from_attributes = True
+
+# Model List Response
+class ModelListResponse(BaseModel):
+    models: List[ModelResponse]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
+# Model Creation Response
+class ModelCreationResponse(BaseModel):
+    model: ModelResponse
+    message: str = "Model created successfully"
+
+# Model Training Schemas
+class ModelTrainingRequest(BaseModel):
+    model_id: uuid.UUID
+
+class ModelTrainingResponse(BaseModel):
+    task_id: uuid.UUID
+    status: str
+    message: str
+
+# Model Query Schemas
+class ModelQueryRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=1000)
+
+class ModelQueryResponse(BaseModel):
+    question: str
+    sql: str
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    execution_time: Optional[float] = None
+
+# Model Schema Discovery Schemas
+class SchemaDiscoveryRequest(BaseModel):
+    model_id: uuid.UUID
+
+class SchemaDiscoveryResponse(BaseModel):
+    tables: List[Dict[str, Any]]
+    message: str
+
+# Model Status Update Schemas
+class ModelStatusUpdateRequest(BaseModel):
+    status: ModelStatus
+
+class ModelStatusUpdateResponse(BaseModel):
+    model: ModelResponse
+    message: str

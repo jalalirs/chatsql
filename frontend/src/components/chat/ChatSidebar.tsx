@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, User, History, Database, Trash2, MoreVertical } from 'lucide-react';
+import { Plus, Settings, User, History, Database, Trash2, MoreVertical, Brain } from 'lucide-react';
 import { User as UserType } from '../../types/auth';
 import { Conversation } from '../../types/chat';
 import { chatService } from '../../services/chat';
@@ -148,6 +148,13 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
           >
             <Database size={16} />
             <span>Manage Connections</span>
+          </button>
+          <button
+            onClick={() => window.location.href = '/models'}
+            className="w-full flex items-center gap-3 p-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+          >
+            <Brain size={16} />
+            <span>Manage Models</span>
           </button>
         </div>
       </div>

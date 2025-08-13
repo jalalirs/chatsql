@@ -199,18 +199,17 @@ class UserService:
                 name=conn.name,
                 server=conn.server,
                 database_name=conn.database_name,
-                table_name=conn.table_name,
                 driver=conn.driver,
                 encrypt=conn.encrypt,
                 trust_server_certificate=conn.trust_server_certificate,
                 status=conn.status,
                 test_successful=conn.test_successful,
-                column_descriptions_uploaded=conn.column_descriptions_uploaded,
-                generated_examples_count=conn.generated_examples_count,
+                database_schema=conn.database_schema,
+                last_schema_refresh=conn.last_schema_refresh,
                 total_queries=conn.total_queries or 0,
                 last_queried_at=conn.last_queried_at,
                 created_at=conn.created_at,
-                trained_at=conn.trained_at
+                updated_at=conn.updated_at
             )
             for conn in connections
         ]

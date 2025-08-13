@@ -17,7 +17,6 @@ interface ConnectionFormData {
   database_name: string;
   username: string;
   password: string;
-  table_name: string;
   driver: string;
   encrypt: boolean;
   trust_server_certificate: boolean;
@@ -41,7 +40,6 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
     database_name: '',
     username: '',
     password: '',
-    table_name: '',
     driver: 'ODBC Driver 18 for SQL Server',
     encrypt: true,
     trust_server_certificate: false
@@ -64,7 +62,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
 
   const isFormValid = () => {
     return !!(formData.name && formData.server && formData.database_name && 
-             formData.username && formData.password && formData.table_name);
+             formData.username && formData.password);
   };
 
   const handleTestConnection = async () => {
@@ -80,7 +78,6 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
           database_name: formData.database_name,
           username: formData.username,
           password: formData.password,
-          table_name: formData.table_name,
           driver: formData.driver,
           encrypt: formData.encrypt,
           trust_server_certificate: formData.trust_server_certificate
@@ -291,7 +288,6 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
       formDataToSend.append('database_name', formData.database_name);
       formDataToSend.append('username', formData.username);
       formDataToSend.append('password', formData.password);
-      formDataToSend.append('table_name', formData.table_name);
       formDataToSend.append('driver', formData.driver);
       formDataToSend.append('encrypt', formData.encrypt.toString());
       formDataToSend.append('trust_server_certificate', formData.trust_server_certificate.toString());
@@ -334,7 +330,6 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
       database_name: 'TestCompanyDB',
       username: 'sa',
       password: 'l.messi10',
-      table_name: 'Employees',
       driver: 'ODBC Driver 18 for SQL Server',
       encrypt: true,
       trust_server_certificate: false
@@ -400,18 +395,6 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
                   value={formData.database_name}
                   onChange={(e) => handleInputChange('database_name', e.target.value)}
                   placeholder="ecommerce"
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Table Name *
-                </label>
-                <input
-                  type="text"
-                  value={formData.table_name}
-                  onChange={(e) => handleInputChange('table_name', e.target.value)}
-                  placeholder="schema.tablename"
                   className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
@@ -659,7 +642,6 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
                     database_name: '',
                     username: '',
                     password: '',
-                    table_name: '',
                     driver: 'ODBC Driver 18 for SQL Server',
                     encrypt: true,
                     trust_server_certificate: false

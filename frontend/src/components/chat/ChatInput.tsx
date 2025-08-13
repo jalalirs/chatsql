@@ -36,7 +36,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   };
 
-  const trainedConnections = connections.filter(conn => conn.status === 'trained');
+  const availableConnections = connections.filter(conn => conn.status === 'test_success');
   const canSend = value.trim() && selectedConnection && !loading;
 
   return (
@@ -77,9 +77,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         <div className="relative">
           <button
             onClick={() => setShowDropdown(!showDropdown)}
-            disabled={trainedConnections.length === 0}
+            disabled={availableConnections.length === 0}
             className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-colors ${
-              trainedConnections.length === 0
+              availableConnections.length === 0
                 ? 'text-gray-400 cursor-not-allowed'
                 : 'text-gray-600 hover:bg-gray-100'
             }`}
@@ -88,15 +88,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             <span>
               {selectedConnection?.name || 'Select DB'}
             </span>
-            {trainedConnections.length > 0 && (
+            {availableConnections.length > 0 && (
               <ChevronDown size={12} />
             )}
           </button>
 
           {/* Dropdown */}
-          {showDropdown && trainedConnections.length > 0 && (
+          {showDropdown && availableConnections.length > 0 && (
             <div className="absolute bottom-full left-0 mb-2 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-[180px]">
-              {trainedConnections.map(connection => (
+              {availableConnections.map(connection => (
                 <button
                   key={connection.id}
                   onClick={() => {

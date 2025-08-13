@@ -307,7 +307,6 @@ class ConversationService:
                 database_name=connection.database_name,
                 username=connection.username,
                 password=connection.password,
-                table_name=connection.table_name,
                 driver=connection.driver,
                 encrypt=connection.encrypt,
                 trust_server_certificate=connection.trust_server_certificate

@@ -1,152 +1,342 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import Optional
-import uuid
-import logging
+from typing import List, Optional, Dict, Any
+from uuid import UUID
 
-from app.dependencies import get_db, get_current_active_user, validate_api_key
-from app.services.connection_service import connection_service
-from app.models.database import TrainingTask,  User
-from app.core.sse_manager import sse_manager
-from app.config import settings
+from app.core.database import get_async_db
+from app.dependencies import get_current_user
+from app.models.schemas import (
+    ModelTrainingDocumentationCreate, ModelTrainingDocumentationUpdate, ModelTrainingDocumentationResponse,
+    ModelTrainingQuestionCreate, ModelTrainingQuestionUpdate, ModelTrainingQuestionResponse,
+    ModelTrainingColumnCreate, ModelTrainingColumnUpdate, ModelTrainingColumnResponse,
+    ModelTrainingRequest, ModelTrainingResponse, ModelQueryRequest, ModelQueryResponse
+)
+from app.services.training_service import training_service
+from app.models.database import User
 
-router = APIRouter(prefix="/training", tags=["Training"])
-logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/training", tags=["training"])
 
-
-@router.get("/tasks/{task_id}/status")
-async def get_task_status(
-    task_id: str,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+# Model Training Operations
+@router.post("/models/{model_id}/train", response_model=ModelTrainingResponse)
+async def train_model(
+    model_id: UUID = Path(..., description="Model ID"),
+    training_request: ModelTrainingRequest = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
 ):
-    """Get training task status (must belong to current user)"""
+    """Train a model with generated training data"""
     try:
-        stmt = select(TrainingTask).where(
-            TrainingTask.id == task_id,
-            TrainingTask.user_id == current_user.id  # Ensure user owns the task
+        num_examples = training_request.num_examples if training_request else 50
+        
+        result = await training_service.train_model(
+            db=db,
+            model_id=str(model_id),
+            user=current_user,
+            num_examples=num_examples
         )
-        result = await db.execute(stmt)
-        task = result.scalar_one_or_none()
         
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Task not found or access denied"
-            )
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["error"])
         
-        return {
-            "task_id": task.id,
-            "connection_id": task.connection_id,
-            "user_id": str(task.user_id),
-            "task_type": task.task_type,
-            "status": task.status,
-            "progress": task.progress,
-            "error_message": task.error_message,
-            "started_at": task.started_at,
-            "completed_at": task.completed_at,
-            "created_at": task.created_at
-        }
-        
+        return ModelTrainingResponse(
+            task_id=str(model_id),  # For now, using model_id as task_id
+            status="training",
+            message=f"Training started with {result.get('total_generated', 0)} examples"
+        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get task status: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get task status: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to train model: {str(e)}")
 
-@router.get("/tasks")
-async def list_user_tasks(
-    task_type: Optional[str] = None,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+@router.post("/models/{model_id}/generate-data")
+async def generate_training_data(
+    model_id: UUID = Path(..., description="Model ID"),
+    num_examples: int = Query(50, ge=1, le=200, description="Number of examples to generate"),
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
 ):
-    """List current user's training tasks"""
+    """Generate training data for a model"""
     try:
-        query = select(TrainingTask).where(TrainingTask.user_id == current_user.id)
+        result = await training_service.generate_training_data(
+            db=db,
+            user=current_user,
+            model_id=str(model_id),
+            num_examples=num_examples,
+            task_id=str(model_id)  # For now, using model_id as task_id
+        )
         
-        if task_type:
-            query = query.where(TrainingTask.task_type == task_type)
-            
-        query = query.order_by(TrainingTask.created_at.desc()).limit(50)
-        
-        result = await db.execute(query)
-        tasks = result.scalars().all()
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error_message)
         
         return {
-            "tasks": [
-                {
-                    "task_id": task.id,
-                    "connection_id": task.connection_id,
-                    "task_type": task.task_type,
-                    "status": task.status,
-                    "progress": task.progress,
-                    "error_message": task.error_message,
-                    "started_at": task.started_at,
-                    "completed_at": task.completed_at,
-                    "created_at": task.created_at
-                }
-                for task in tasks
-            ],
-            "total": len(tasks),
-            "user_id": str(current_user.id)
+            "success": True,
+            "model_id": str(model_id),
+            "total_generated": result.total_generated,
+            "failed_count": result.failed_count,
+            "message": f"Generated {result.total_generated} training examples"
         }
-        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to list user tasks: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list tasks: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to generate training data: {str(e)}")
 
-# ========================
-# BACKGROUND TASKS
-# ========================
-
-
-async def _update_task_status(
-    db: AsyncSession, 
-    task_id: str, 
-    status: str, 
-    progress: int, 
-    error_message: str = None
+@router.post("/models/{model_id}/query", response_model=ModelQueryResponse)
+async def query_model(
+    model_id: UUID = Path(..., description="Model ID"),
+    query_request: ModelQueryRequest = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
 ):
-    """Update task status in database"""
+    """Query a trained model"""
     try:
-        from datetime import datetime
+        question = query_request.question if query_request else ""
+        if not question:
+            raise HTTPException(status_code=400, detail="Question is required")
         
-        stmt = select(TrainingTask).where(TrainingTask.id == task_id)
-        result = await db.execute(stmt)
-        task = result.scalar_one_or_none()
+        result = await training_service.query_model(
+            db=db,
+            model_id=str(model_id),
+            user=current_user,
+            question=question
+        )
         
-        if task:
-            task.status = status
-            task.progress = progress
-            if error_message:
-                task.error_message = error_message
-            if status == "running" and not task.started_at:
-                task.started_at = datetime.utcnow()
-            elif status in ["completed", "failed"]:
-                task.completed_at = datetime.utcnow()
-            
-            await db.commit()
-            
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["error"])
+        
+        return ModelQueryResponse(
+            model_id=str(model_id),
+            question=question,
+            sql=result["sql"],
+            message="Query executed successfully"
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to update task status: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to query model: {str(e)}")
 
-async def _update_task_progress(db: AsyncSession, task_id: str, progress: int):
-    """Update task progress only"""
+@router.get("/models/{model_id}/training-data")
+async def get_model_training_data(
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Get all training data for a model"""
     try:
-        stmt = select(TrainingTask).where(TrainingTask.id == task_id)
-        result = await db.execute(stmt)
-        task = result.scalar_one_or_none()
-        
-        if task:
-            task.progress = progress
-            await db.commit()
-            
+        training_data = await training_service.get_model_training_data(db, str(model_id))
+        return training_data
     except Exception as e:
-        logger.error(f"Failed to update task progress: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get training data: {str(e)}")
+
+# Training Documentation Management
+@router.post("/models/{model_id}/documentation", response_model=ModelTrainingDocumentationResponse)
+async def create_training_documentation(
+    doc_data: ModelTrainingDocumentationCreate,
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Create training documentation for a model"""
+    try:
+        doc = await training_service.create_training_documentation(
+            db=db,
+            model_id=str(model_id),
+            doc_data=doc_data
+        )
+        return doc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create training documentation: {str(e)}")
+
+@router.get("/models/{model_id}/documentation", response_model=List[ModelTrainingDocumentationResponse])
+async def get_training_documentation(
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Get all training documentation for a model"""
+    try:
+        docs = await training_service.get_model_training_documentation(db, str(model_id))
+        return docs
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get training documentation: {str(e)}")
+
+@router.put("/documentation/{doc_id}", response_model=ModelTrainingDocumentationResponse)
+async def update_training_documentation(
+    doc_data: ModelTrainingDocumentationUpdate,
+    doc_id: UUID = Path(..., description="Training documentation ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Update training documentation"""
+    try:
+        doc = await training_service.update_training_documentation(
+            db=db,
+            doc_id=str(doc_id),
+            doc_data=doc_data
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail="Training documentation not found")
+        return doc
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update training documentation: {str(e)}")
+
+@router.delete("/documentation/{doc_id}")
+async def delete_training_documentation(
+    doc_id: UUID = Path(..., description="Training documentation ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Delete training documentation"""
+    try:
+        success = await training_service.delete_training_documentation(db, str(doc_id))
+        if not success:
+            raise HTTPException(status_code=404, detail="Training documentation not found")
+        return {"message": "Training documentation deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete training documentation: {str(e)}")
+
+# Training Questions Management
+@router.post("/models/{model_id}/questions", response_model=ModelTrainingQuestionResponse)
+async def create_training_question(
+    question_data: ModelTrainingQuestionCreate,
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Create training question for a model"""
+    try:
+        question = await training_service.create_training_question(
+            db=db,
+            model_id=str(model_id),
+            question_data=question_data
+        )
+        return question
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create training question: {str(e)}")
+
+@router.get("/models/{model_id}/questions", response_model=List[ModelTrainingQuestionResponse])
+async def get_training_questions(
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Get all training questions for a model"""
+    try:
+        questions = await training_service.get_model_training_questions(db, str(model_id))
+        return questions
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get training questions: {str(e)}")
+
+@router.put("/questions/{question_id}", response_model=ModelTrainingQuestionResponse)
+async def update_training_question(
+    question_data: ModelTrainingQuestionUpdate,
+    question_id: UUID = Path(..., description="Training question ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Update training question"""
+    try:
+        question = await training_service.update_training_question(
+            db=db,
+            question_id=str(question_id),
+            question_data=question_data
+        )
+        if not question:
+            raise HTTPException(status_code=404, detail="Training question not found")
+        return question
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update training question: {str(e)}")
+
+@router.delete("/questions/{question_id}")
+async def delete_training_question(
+    question_id: UUID = Path(..., description="Training question ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Delete training question"""
+    try:
+        success = await training_service.delete_training_question(db, str(question_id))
+        if not success:
+            raise HTTPException(status_code=404, detail="Training question not found")
+        return {"message": "Training question deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete training question: {str(e)}")
+
+# Training Columns Management
+@router.post("/models/{model_id}/columns", response_model=ModelTrainingColumnResponse)
+async def create_training_column(
+    column_data: ModelTrainingColumnCreate,
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Create training column for a model"""
+    try:
+        column = await training_service.create_training_column(
+            db=db,
+            model_id=str(model_id),
+            column_data=column_data
+        )
+        return column
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create training column: {str(e)}")
+
+@router.get("/models/{model_id}/columns", response_model=List[ModelTrainingColumnResponse])
+async def get_training_columns(
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Get all training columns for a model"""
+    try:
+        columns = await training_service.get_model_training_columns(db, str(model_id))
+        return columns
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get training columns: {str(e)}")
+
+@router.put("/columns/{column_id}", response_model=ModelTrainingColumnResponse)
+async def update_training_column(
+    column_data: ModelTrainingColumnUpdate,
+    column_id: UUID = Path(..., description="Training column ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Update training column"""
+    try:
+        column = await training_service.update_training_column(
+            db=db,
+            column_id=str(column_id),
+            column_data=column_data
+        )
+        if not column:
+            raise HTTPException(status_code=404, detail="Training column not found")
+        return column
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update training column: {str(e)}")
+
+@router.delete("/columns/{column_id}")
+async def delete_training_column(
+    column_id: UUID = Path(..., description="Training column ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Delete training column"""
+    try:
+        success = await training_service.delete_training_column(db, str(column_id))
+        if not success:
+            raise HTTPException(status_code=404, detail="Training column not found")
+        return {"message": "Training column deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete training column: {str(e)}")
