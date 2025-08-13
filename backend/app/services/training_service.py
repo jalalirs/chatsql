@@ -211,7 +211,7 @@ class TrainingService:
         try:
             # Connect to database
             conn_str = self._build_odbc_connection_string(connection)
-            cnxn = pyodbc.connect(conn_str, timeout=30)
+            cnxn = await asyncio.to_thread(pyodbc.connect, conn_str, timeout=30)
             cursor = cnxn.cursor()
             
             # Get table schema
@@ -219,7 +219,7 @@ class TrainingService:
             await sse_logger.info(f"Analyzing schema for table: {full_table_name}")
             
             # Get columns for this table
-            cursor.execute(f"""
+            await asyncio.to_thread(cursor.execute, f"""
                 SELECT 
                     COLUMN_NAME,
                     DATA_TYPE,
@@ -229,7 +229,7 @@ class TrainingService:
                 ORDER BY ORDINAL_POSITION
             """)
             
-            columns = cursor.fetchall()
+            columns = await asyncio.to_thread(cursor.fetchall)
             column_info = []
             
             for col in columns:

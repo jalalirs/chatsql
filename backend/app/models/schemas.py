@@ -150,6 +150,7 @@ class ConnectionTestResult(BaseModel):
     error_message: Optional[str] = None
     sample_data: Optional[List[Dict[str, Any]]] = None
     column_info: Optional[Dict[str, Any]] = None
+    database_schema: Optional[Dict[str, Any]] = None
     task_id: str
 
 class ConnectionResponse(BaseModel):

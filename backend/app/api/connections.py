@@ -64,8 +64,7 @@ async def test_connection(
             _run_connection_test,
             request.connection_data,
             task_id,
-            current_user,
-            db
+            current_user
         )
         
         return ConnectionTestResult(
@@ -132,8 +131,7 @@ async def retest_connection(
             _run_connection_test,
             connection_data,
             task_id,
-            current_user,
-            db
+            current_user
         )
         
         return {
@@ -148,40 +146,48 @@ async def retest_connection(
         logger.error(f"Connection retest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     
-async def _run_connection_test(connection_data: ConnectionCreate, task_id: str, user: User, db: AsyncSession):
+async def _run_connection_test(connection_data: ConnectionCreate, task_id: str, user: User):
     """Background task to run connection test"""
     try:
-        # Update task status
-        await _update_task_status(db, task_id, "running", 0)
+        # Create a new database session for the background task
+        from app.core.database import AsyncSessionLocal
         
-        # Run the actual test
-        result = await connection_service.test_connection(connection_data, task_id)
-        
-        # Update task with result
-        if result.success:
-            await _update_task_status(db, task_id, "completed", 100)
-            await sse_manager.send_to_task(task_id, "test_completed", {
-                "success": True,
-                "sample_data": result.sample_data,
-                "column_info": result.column_info,
-                "task_id": task_id
-            })
-        else:
-            await _update_task_status(db, task_id, "failed", 0, result.error_message)
-            await sse_manager.send_to_task(task_id, "test_failed", {
-                "success": False,
-                "error": result.error_message,
-                "task_id": task_id
-            })
+        async with AsyncSessionLocal() as db:
+            # Update task status
+            await _update_task_status(db, task_id, "running", 0)
             
+            # Run the actual test
+            result = await connection_service.test_connection(connection_data, task_id)
+            
+            # Update task with result
+            if result.success:
+                await _update_task_status(db, task_id, "completed", 100)
+                await sse_manager.send_to_task(task_id, "test_completed", {
+                    "success": True,
+                    "sample_data": result.sample_data,
+                    "column_info": result.column_info,
+                    "task_id": task_id
+                })
+            else:
+                await _update_task_status(db, task_id, "failed", 0, result.error_message)
+                await sse_manager.send_to_task(task_id, "test_failed", {
+                    "success": False,
+                    "error": result.error_message,
+                    "task_id": task_id
+                })
+                
     except Exception as e:
         logger.error(f"Background connection test failed: {e}")
-        await _update_task_status(db, task_id, "failed", 0, str(e))
-        await sse_manager.send_to_task(task_id, "test_failed", {
-            "success": False,
-            "error": str(e),
-            "task_id": task_id
-        })
+        
+        # Create a new session for error handling
+        from app.core.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            await _update_task_status(db, task_id, "failed", 0, str(e))
+            await sse_manager.send_to_task(task_id, "test_failed", {
+                "success": False,
+                "error": str(e),
+                "task_id": task_id
+            })
 
 @router.post("/", response_model=ConnectionResponse)
 async def create_connection(
@@ -229,9 +235,18 @@ async def create_connection(
                 detail=f"Validation errors: {', '.join(validation_errors)}"
             )
      
-        # Create connection for user
+        # Test connection first to get schema
+        test_result = await connection_service.test_connection(connection_data, "temp-test")
+        
+        if not test_result.success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Connection test failed: {test_result.error_message}"
+            )
+     
+        # Create connection for user with discovered schema
         connection = await connection_service.create_connection_for_user(
-            db, current_user, connection_data
+            db, current_user, connection_data, test_result.database_schema
         )
         
         logger.info(f"Created connection: {connection.id} for user {current_user.email}")
@@ -296,9 +311,12 @@ async def delete_connection(
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a connection and all associated data (must belong to current user)"""
+    # Store user ID to avoid lazy loading issues in error handling
+    user_id = str(current_user.id)
+    
     try:
         # Check if connection exists and belongs to user
-        connection = await connection_service.get_user_connection(db, str(current_user.id), connection_id)
+        connection = await connection_service.get_user_connection(db, user_id, connection_id)
         if not connection:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -306,7 +324,7 @@ async def delete_connection(
             )
         
         # Delete connection (this will also delete conversations and messages via cascade)
-        success = await connection_service.delete_user_connection(db, str(current_user.id), connection_id)
+        success = await connection_service.delete_user_connection(db, user_id, connection_id)
         
         if success:
             # Clean up uploaded files
@@ -325,7 +343,7 @@ async def delete_connection(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete connection {connection_id} for user {current_user.id}: {e}")
+        logger.error(f"Failed to delete connection {connection_id} for user {user_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete connection: {str(e)}"
@@ -371,8 +389,7 @@ async def refresh_connection_schema(
             _run_schema_refresh,
             connection_id,
             task_id,
-            current_user,
-            db
+            current_user
         )
         
         return TaskResponse(
@@ -417,7 +434,18 @@ async def get_connection_schema(
                 detail="Schema not found. Please refresh schema first."
             )
         
-        return schema
+        # Calculate totals
+        total_tables = len(schema)
+        total_columns = sum(len(table_info.get('columns', [])) for table_info in schema.values())
+        
+        return ConnectionSchemaResponse(
+            connection_id=connection_id,
+            connection_name=connection.name,
+            schema=schema,
+            last_refreshed=connection.last_schema_refresh.isoformat() if connection.last_schema_refresh else None,
+            total_tables=total_tables,
+            total_columns=total_columns
+        )
         
     except HTTPException:
         raise
@@ -498,64 +526,71 @@ async def get_table_columns(
 async def _run_schema_refresh(
     connection_id: str,
     task_id: str,
-    user: User,
-    db: AsyncSession
+    user: User
 ):
     """Background task to refresh schema"""
     try:
-        await _update_task_status(db, task_id, "running", 0)
+        # Create a new database session for the background task
+        from app.core.database import AsyncSessionLocal
         
-        # Get connection details
-        connection = await connection_service.get_connection_by_id(db, connection_id)
-        if not connection:
-            raise ValueError("Connection not found")
-        
-        # Verify user ownership
-        if str(connection.user_id) != str(user.id):
-            raise ValueError("Access denied: Connection does not belong to user")
-        
-        # Create connection data for schema analysis
-        connection_data = ConnectionCreate(
-            name=connection.name,
-            server=connection.server,
-            database_name=connection.database_name,
-            username=connection.username,
-            password=connection.password,
-            driver=connection.driver,
-            encrypt=connection.encrypt,
-            trust_server_certificate=connection.trust_server_certificate
-        )
-        
-        # Run schema refresh
-        result = await connection_service.refresh_connection_schema(
-            connection_data, connection_id, task_id
-        )
-        
-        if result.success:
-            await _update_task_status(db, task_id, "completed", 100)
-            await sse_manager.send_to_task(task_id, "schema_refresh_completed", {
-                "success": True,
-                "connection_id": connection_id,
-                "total_tables": len(result.database_schema) if result.database_schema else 0,
-                "task_id": task_id
-            })
-        else:
-            await _update_task_status(db, task_id, "failed", 0, result.error_message)
-            await sse_manager.send_to_task(task_id, "schema_refresh_failed", {
-                "success": False,
-                "error": result.error_message,
-                "task_id": task_id
-            })
+        async with AsyncSessionLocal() as db:
+            await _update_task_status(db, task_id, "running", 0)
             
+            # Get connection details
+            connection = await connection_service.get_connection_by_id(db, connection_id)
+            if not connection:
+                raise ValueError("Connection not found")
+            
+            # Verify user ownership
+            if str(connection.user_id) != str(user.id):
+                raise ValueError("Access denied: Connection does not belong to user")
+            
+            # Create connection data for schema analysis
+            connection_data = ConnectionCreate(
+                name=connection.name,
+                server=connection.server,
+                database_name=connection.database_name,
+                username=connection.username,
+                password=connection.password,
+                driver=connection.driver,
+                encrypt=connection.encrypt,
+                trust_server_certificate=connection.trust_server_certificate
+            )
+            
+            # Run schema refresh
+            result = await connection_service.refresh_connection_schema(
+                connection_data, connection_id, task_id, db
+            )
+            
+            if result.success:
+                await _update_task_status(db, task_id, "completed", 100)
+                await sse_manager.send_to_task(task_id, "schema_refresh_completed", {
+                    "success": True,
+                    "connection_id": connection_id,
+                    "total_tables": len(result.database_schema) if result.database_schema else 0,
+                    "task_id": task_id
+                })
+            else:
+                await _update_task_status(db, task_id, "failed", 0, result.error_message)
+                await sse_manager.send_to_task(task_id, "schema_refresh_failed", {
+                    "success": False,
+                    "error": result.error_message,
+                    "task_id": task_id
+                })
+                
     except Exception as e:
         error_msg = f"Schema refresh failed: {str(e)}"
         logger.error(error_msg)
-        await _update_task_status(db, task_id, "failed", 0, error_msg)
-        await sse_manager.send_to_task(task_id, "schema_refresh_failed", {
-            "success": False,
-            "error": error_msg,
-            "task_id": task_id
-        })
+        
+        # Create a new session for error handling
+        from app.core.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            await _update_task_status(db, task_id, "failed", 0, error_msg)
+            await sse_manager.send_to_task(task_id, "schema_refresh_failed", {
+                "success": False,
+                "error": error_msg,
+                "task_id": task_id
+            })
 
 async def _update_task_status(db: AsyncSession, task_id: str, status: str, progress: int, error_message: str = None):
     """Update task status in database"""

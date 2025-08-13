@@ -467,7 +467,6 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
   const [columnDescriptions, setColumnDescriptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [generatingDescriptions, setGeneratingDescriptions] = useState(false);
   const [uploadingCsv, setUploadingCsv] = useState(false);
   const [editingColumn, setEditingColumn] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -575,159 +574,6 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
     }
   };
 
-  const generateAllDescriptions = async () => {
-    setGeneratingDescriptions(true);
-    setError(null);
-    
-    try {
-      console.log('🤖 Starting AI description generation...');
-      
-      const response = await api.post(`/connections/${connection.id}/generate-column-descriptions`, {
-        overwrite_existing: true
-      });
-      
-      const result = response.data;
-      console.log('📡 Generation task started:', result);
-      
-      // If there's a stream_url, use SSE for real-time updates
-      if (result.stream_url) {
-        const fullStreamUrl = result.stream_url.startsWith('http') 
-          ? result.stream_url 
-          : `${API_BASE_URL}${result.stream_url}`;
-        
-        console.log('🔗 Connecting to generation SSE stream:', fullStreamUrl);
-        
-        sseConnection.connect(fullStreamUrl, {
-          onCustomEvent: (eventType, data) => {
-            console.log('🎯 Generation event:', eventType, data);
-            
-            if (eventType === 'description_generated') {
-              // Update individual column description in real-time
-              setColumnDescriptions(prev => {
-                const updated = [...prev];
-                const existingIndex = updated.findIndex(col => col.column_name === data.column_name);
-                
-                if (existingIndex >= 0) {
-                  updated[existingIndex] = {
-                    ...updated[existingIndex],
-                    description: data.description,
-                    has_description: true
-                  };
-                } else {
-                  updated.push({
-                    column_name: data.column_name,
-                    description: data.description,
-                    data_type: data.data_type,
-                    variable_range: data.variable_range,
-                    has_description: true
-                  });
-                }
-                
-                return updated;
-              });
-            }
-            if (eventType === 'generation_started') {
-              console.log('🚀 Generation started:', data);
-            } else if (eventType === 'generation_completed') {
-              console.log('✅ Generation completed:', data);
-              setGeneratingDescriptions(false);
-              
-              // Update connection status
-              onConnectionUpdate({
-                ...connection,
-                status: 'test_success'
-              });
-              
-              // Reload descriptions immediately
-              loadSchemaAndDescriptions();
-            } else if (eventType === 'generation_failed' || eventType === 'generation_error') {
-              console.error('❌ Generation failed:', data);
-              setError(data.error || 'AI generation failed');
-              setGeneratingDescriptions(false);
-            }
-          },
-          
-          onCompleted: (data) => {
-            console.log('✅ Generation completed via onCompleted:', data);
-            setGeneratingDescriptions(false);
-            
-            // Update connection status
-            onConnectionUpdate({
-              ...connection,
-              status: 'test_success'
-            });
-            
-            // Reload descriptions
-            loadSchemaAndDescriptions();
-          },
-          
-          onError: (data) => {
-            console.error('❌ Generation failed:', data);
-            setError(data.error || 'AI generation failed');
-            setGeneratingDescriptions(false);
-          }
-        }, 120000); // 2 minute timeout
-        
-      } else {
-        // Fallback: Simple polling
-        console.log('📊 No SSE stream, using polling...');
-        
-        const pollForCompletion = async () => {
-          let attempts = 0;
-          const maxAttempts = 30;
-          
-          while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            
-            try {
-              console.log(`🔄 Polling attempt ${attempts + 1}/${maxAttempts}...`);
-              const descriptionsResponse = await api.get(`/connections/${connection.id}/column-descriptions`);
-              
-              // Check if we have new descriptions (simple heuristic)
-              const newDescriptions = descriptionsResponse.data.column_descriptions || [];
-              interface ColumnDescription {
-                column_name: string;
-                description?: string;
-                data_type?: string;
-                has_description?: boolean;
-              }
-
-              // Then use it in the filter:
-              const descriptionsCount = newDescriptions.filter((col: ColumnDescription) => col.description && col.description.trim().length > 0).length;
-              
-              console.log(`📝 Found ${descriptionsCount} columns with descriptions`);
-              
-              if (descriptionsCount > 0) {
-                setColumnDescriptions(newDescriptions);
-                setGeneratingDescriptions(false);
-                
-                // Update connection status
-                onConnectionUpdate({
-                  ...connection,
-                  status: 'test_success'
-                });
-                return;
-              }
-            } catch (e) {
-              console.log('📊 Polling error (continuing):', e);
-            }
-            
-            attempts++;
-          }
-          
-          throw new Error('AI generation timed out - please check manually');
-        };
-
-        await pollForCompletion();
-      }
-      
-    } catch (err: any) {
-      console.error('❌ Failed to generate descriptions:', err);
-      setError(err.response?.data?.detail || err.message);
-      setGeneratingDescriptions(false);
-    }
-  };
-
   const handleCsvUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -786,9 +632,14 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
         });
       } else {
         // Create new column if it doesn't exist
+        // Find the column in the first table for now
+        const firstTableName = Object.keys(schemaData.schema)[0];
+        const firstTable = schemaData.schema[firstTableName];
+        const columnInfo = firstTable?.columns?.find((col: any) => col.column_name === columnName);
+        
         const response = await api.post(`/connections/${connection.id}/columns`, {
           column_name: columnName,
-          data_type: schemaData?.schema?.columns[columnName]?.data_type || "",
+          data_type: columnInfo?.data_type || "",
           description: description,
           description_source: "manual"
         });
@@ -814,9 +665,12 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
       columnDescriptions.forEach(col => {
         csvContent += `"${col.column_name}","${col.description || 'Add description here'}"\n`;
       });
-    } else if (schemaData?.schema?.columns) {
-      Object.keys(schemaData.schema.columns).forEach(columnName => {
-        csvContent += `"${columnName}","Add description here"\n`;
+    } else if (schemaData?.schema && Object.keys(schemaData.schema).length > 0) {
+      // Get columns from the first table
+      const firstTableName = Object.keys(schemaData.schema)[0];
+      const firstTable = schemaData.schema[firstTableName];
+      firstTable?.columns?.forEach((column: any) => {
+        csvContent += `"${column.column_name}","Add description here"\n`;
       });
     } else {
       csvContent += "EmployeeID,Unique identifier for each employee\n";
@@ -915,8 +769,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
               Download CSV Template
             </button>
             
-            <label className="px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors cursor-pointer">
-              Upload CSV
+            <label className="cursor-pointer px-3 py-2 text-sm bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
               <input
                 type="file"
                 accept=".csv"
@@ -924,15 +777,8 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
                 className="hidden"
                 disabled={uploadingCsv}
               />
+              {uploadingCsv ? 'Uploading...' : 'Upload CSV'}
             </label>
-            
-            <button
-              onClick={generateAllDescriptions}
-              disabled={generatingDescriptions || !schemaData}
-              className="px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
-            >
-              {generatingDescriptions ? 'Generating...' : 'Generate All with AI'}
-            </button>
             
             <button
               onClick={refreshSchema}
@@ -964,14 +810,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
           </div>
         )}
 
-        {generatingDescriptions && (
-          <div className="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-            <div className="flex items-center gap-2 text-purple-800">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
-              <span className="font-medium">Generating descriptions with AI...</span>
-            </div>
-          </div>
-        )}
+
       </div>
 
       {/* Schema Summary */}
@@ -982,7 +821,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
           <div className="grid grid-cols-4 gap-4 mb-6">
             <div className="bg-blue-50 rounded-lg p-4">
               <div className="text-2xl font-bold text-blue-600">
-                {schemaData.schema?.table_info?.total_columns || 0}
+                {schemaData.total_columns || 0}
               </div>
               <div className="text-sm text-blue-700">Total Columns</div>
             </div>
@@ -994,9 +833,9 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
             </div>
             <div className="bg-yellow-50 rounded-lg p-4">
               <div className="text-2xl font-bold text-yellow-600">
-                {schemaData.schema?.table_info?.sample_rows || 0}
+                {schemaData.total_tables || 0}
               </div>
-              <div className="text-sm text-yellow-700">Sample Rows</div>
+              <div className="text-sm text-yellow-700">Total Tables</div>
             </div>
             <div className="bg-purple-50 rounded-lg p-4">
               <div className="text-2xl font-bold text-purple-600">
@@ -1008,135 +847,142 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
         </div>
       )}
 
-      {/* Columns Table */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">Columns & Descriptions</h3>
-        
-        {schemaData?.schema?.columns ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-full border border-gray-200 rounded-lg">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/5">
-                    Column Name
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/6">
-                    Data Type
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/4">
-                    Values/Range
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-2/5">
-                    Description
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(schemaData.schema.columns).map(([columnName, columnInfo]: [string, any]) => {
-                  const description = columnDescriptions.find(col => col.column_name === columnName);
-                  const isEditing = editingColumn === columnName;
-                  
-                  return (
-                    <tr key={columnName} className="border-b hover:bg-gray-50">
-                      <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                        {columnName}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded font-mono">
-                          {formatDataType(columnInfo.data_type)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {renderColumnValue(columnInfo)}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {isEditing ? (
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              defaultValue={description?.description || ''}
-                              className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  const value = (e.target as HTMLInputElement).value;
-                                  updateDescription(columnName, value);
-                                  setEditingColumn(null);
-                                } else if (e.key === 'Escape') {
-                                  setEditingColumn(null);
-                                }
-                              }}
-                              onBlur={(e) => {
-                                const value = e.target.value;
-                                updateDescription(columnName, value);
-                                setEditingColumn(null);
-                              }}
-                              autoFocus
-                            />
-                          </div>
-                        ) : (
-                          <div 
-                            className="cursor-pointer hover:bg-gray-100 p-1 rounded min-h-[20px]"
-                            onClick={() => setEditingColumn(columnName)}
-                          >
-                            {description?.description ? (
-                              <span className="text-gray-900">{description.description}</span>
-                            ) : (
-                              <span className="text-gray-400 italic">Click to add description...</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="text-center py-8">
-            <Database size={48} className="mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Schema Data</h3>
-            <p className="text-gray-600 mb-4">
-              Click "Refresh Schema" to analyze your database structure.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Sample Data */}
-      {schemaData?.schema?.sample_data && schemaData.schema.sample_data.length > 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Sample Data</h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border border-gray-200 rounded-lg">
-              <thead className="bg-gray-50">
-                <tr>
-                  {Object.keys(schemaData.schema.sample_data[0]).map((header) => (
-                    <th key={header} className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b">
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {schemaData.schema.sample_data.map((row: any, index: number) => (
-                  <tr key={index} className="border-b hover:bg-gray-50">
-                    {Object.values(row).map((value: any, cellIndex: number) => (
-                      <td key={cellIndex} className="px-4 py-3 text-sm text-gray-700">
-                        {value === null ? (
-                          <span className="text-gray-400 italic">NULL</span>
-                        ) : (
-                          String(value)
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* Tables List */}
+      {schemaData?.schema && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Database Tables</h3>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Object.entries(schemaData.schema).map(([tableName, tableInfo]: [string, any]) => (
+              <div key={tableName} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
+                <h4 className="font-medium text-gray-900 mb-2">{tableName}</h4>
+                <div className="text-sm text-gray-600">
+                  <div>Schema: {tableInfo.schema_name}</div>
+                  <div>Type: {tableInfo.table_type}</div>
+                  <div>Columns: {tableInfo.columns?.length || 0}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
+
+      {/* Columns Table - Show first table's columns for now */}
+      {schemaData?.schema && Object.keys(schemaData.schema).length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">
+            Columns & Descriptions - {Object.keys(schemaData.schema)[0]}
+          </h3>
+          
+          {(() => {
+            const firstTableName = Object.keys(schemaData.schema)[0];
+            const firstTable = schemaData.schema[firstTableName];
+            const columns = firstTable?.columns || [];
+            
+            return columns.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="min-w-full border border-gray-200 rounded-lg">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/5">
+                        Column Name
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/6">
+                        Data Type
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/4">
+                        Nullable
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-2/5">
+                        Description
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {columns.map((columnInfo: any) => {
+                      const columnName = columnInfo.column_name;
+                      const description = columnDescriptions.find(col => col.column_name === columnName);
+                      const isEditing = editingColumn === columnName;
+                      
+                      return (
+                        <tr key={columnName} className="border-b hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                            {columnName}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded font-mono">
+                              {formatDataType(columnInfo.data_type)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            <span className={`px-2 py-1 text-xs rounded ${
+                              columnInfo.is_nullable 
+                                ? 'bg-yellow-100 text-yellow-800' 
+                                : 'bg-red-100 text-red-800'
+                            }`}>
+                              {columnInfo.is_nullable ? 'Nullable' : 'Not Null'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  defaultValue={description?.description || ''}
+                                  className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      const value = (e.target as HTMLInputElement).value;
+                                      updateDescription(columnName, value);
+                                      setEditingColumn(null);
+                                    } else if (e.key === 'Escape') {
+                                      setEditingColumn(null);
+                                    }
+                                  }}
+                                  onBlur={(e) => {
+                                    const value = (e.target as HTMLInputElement).value;
+                                    updateDescription(columnName, value);
+                                    setEditingColumn(null);
+                                  }}
+                                  autoFocus
+                                />
+                                <button
+                                  onClick={() => setEditingColumn(null)}
+                                  className="px-2 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600">
+                                  {description?.description || 'No description'}
+                                </span>
+                                <button
+                                  onClick={() => setEditingColumn(columnName)}
+                                  className="ml-2 px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+                                >
+                                  Edit
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                No columns found for this table.
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+
     </div>
   );
 };

@@ -9,7 +9,7 @@ from jwt import PyJWTError as JWTError
 
 from datetime import datetime, timezone
 
-from app.core.database import get_async_db
+from app.core.database import AsyncSessionLocal
 from app.config import settings
 from app.models.database import User, UserSession
 from app.models.schemas import UserResponse
@@ -22,8 +22,15 @@ security = HTTPBearer(auto_error=False)
 # Database dependency
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get database session dependency"""
-    async for session in get_async_db():
-        yield session
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Database session error: {e}")
+            raise
+        finally:
+            await session.close()
 
 # Validate API key dependency
 async def validate_api_key():

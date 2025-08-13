@@ -21,6 +21,25 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+class SSELogger:
+    """Simple SSE logger for connection operations"""
+    def __init__(self, sse_manager, task_id: str, operation: str):
+        self.sse_manager = sse_manager
+        self.task_id = task_id
+        self.operation = operation
+    
+    async def info(self, message: str):
+        await self.sse_manager.send_to_task(self.task_id, f"{self.operation}_info", {"message": message})
+    
+    async def error(self, message: str):
+        await self.sse_manager.send_to_task(self.task_id, f"{self.operation}_error", {"message": message})
+    
+    async def progress(self, progress: int, message: str):
+        await self.sse_manager.send_to_task(self.task_id, f"{self.operation}_progress", {
+            "progress": progress,
+            "message": message
+        })
+
 class ConnectionService:
     """Service for managing database connections"""
     
@@ -28,88 +47,96 @@ class ConnectionService:
         self.data_dir = settings.DATA_DIR
     
     def _build_odbc_connection_string(self, connection_data: ConnectionCreate) -> str:
-        """Build ODBC connection string with proper boolean handling"""
-        # Convert boolean values to ODBC format
-        encrypt_value = getattr(connection_data, 'encrypt', True)
-        trust_cert_value = getattr(connection_data, 'trust_server_certificate', False)
+        """Build ODBC connection string for SQL Server"""
+        # Base connection string
+        conn_str = f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+        conn_str += f"SERVER={connection_data.server};"
+        conn_str += f"DATABASE={connection_data.database_name};"
+        conn_str += f"UID={connection_data.username};"
+        conn_str += f"PWD={connection_data.password};"
         
-        encrypt_str = 'yes' if encrypt_value else 'no'
-        trust_cert_str = 'yes' if trust_cert_value else 'no'
+        # Add encryption settings
+        if connection_data.encrypt:
+            conn_str += "Encrypt=yes;"
+        else:
+            conn_str += "Encrypt=no;"
         
-        return (
-            f"DRIVER={getattr(connection_data, 'driver', 'ODBC Driver 17 for SQL Server')};"
-            f"SERVER={connection_data.server};"
-            f"DATABASE={connection_data.database_name};"
-            f"UID={connection_data.username};"
-            f"PWD={connection_data.password};"
-            f"Encrypt={encrypt_str};"
-            f"TrustServerCertificate={trust_cert_str};"
-        )
+        if connection_data.trust_server_certificate:
+            conn_str += "TrustServerCertificate=yes;"
+        
+        return conn_str
     
-    def _build_odbc_connection_string_from_db(self, connection: Connection) -> str:
-        """Build ODBC connection string from database connection object"""
-        # Convert boolean values to ODBC format
-        encrypt_str = 'yes' if connection.encrypt else 'no'
-        trust_cert_str = 'yes' if connection.trust_server_certificate else 'no'
-        
-        return (
-            f"DRIVER={connection.driver or 'ODBC Driver 17 for SQL Server'};"
-            f"SERVER={connection.server};"
-            f"DATABASE={connection.database_name};"
-            f"UID={connection.username};"
-            f"PWD={connection.password};"
-            f"Encrypt={encrypt_str};"
-            f"TrustServerCertificate={trust_cert_str};"
-        )
-    
-    async def test_connection(self, connection_data: ConnectionCreate, task_id: str) -> ConnectionTestResult:
-        """Test database connection and analyze schema"""
-        sse_logger = SSELogger(sse_manager, task_id, "connection_test")
+    async def test_connection(self, connection_data: ConnectionCreate, task_id: str = None) -> ConnectionTestResult:
+        """Test database connection and return sample data"""
+        sse_logger = SSELogger(sse_manager, task_id, "connection_test") if task_id else None
         
         try:
-            await sse_logger.info(f"Starting connection test for {connection_data.name}")
-            await sse_logger.progress(10, "Connecting to database...")
+            if sse_logger:
+                await sse_logger.info("Testing database connection...")
+                await sse_logger.progress(10, "Building connection string...")
             
-            # Test connection
+            # Build connection string
             conn_str = self._build_odbc_connection_string(connection_data)
             
+            if sse_logger:
+                await sse_logger.progress(30, "Connecting to database...")
+            
+            # Connect to database
             try:
-                cnxn = pyodbc.connect(conn_str, timeout=30)
+                cnxn = await asyncio.to_thread(pyodbc.connect, conn_str, timeout=30)
                 cursor = cnxn.cursor()
-                await sse_logger.progress(30, "Connection successful, analyzing schema...")
+                
+                if sse_logger:
+                    await sse_logger.progress(50, "Connection successful, analyzing schema...")
                 
             except pyodbc.Error as ex:
                 error_msg = f"Database connection failed: {str(ex)}"
-                await sse_logger.error(error_msg)
+                if sse_logger:
+                    await sse_logger.error(error_msg)
                 return ConnectionTestResult(
                     success=False,
                     error_message=error_msg,
                     task_id=task_id
                 )
             
-            # Analyze database schema (all tables)
-            await sse_logger.progress(40, "Analyzing database schema...")
+            # Analyze database schema
+            if sse_logger:
+                await sse_logger.progress(70, "Analyzing database schema...")
+            
             database_schema = await self._analyze_database_schema(cursor, sse_logger)
             
-            # Get sample data from first table (if any)
+            # Get sample data from first table if available
             sample_data = []
-            if database_schema and len(database_schema) > 0:
-                first_table = list(database_schema.keys())[0]
-                await sse_logger.progress(60, f"Getting sample data from {first_table}...")
-                sample_data = await self._get_sample_data(cursor, first_table, sse_logger)
+            column_info = []
             
-            await sse_logger.progress(100, "Connection test completed successfully")
+            if database_schema:
+                first_table = next(iter(database_schema.values()))
+                table_name = f"{first_table['schema_name']}.{first_table['table_name']}"
+                
+                if sse_logger:
+                    await sse_logger.progress(90, f"Getting sample data from {table_name}...")
+                
+                sample_data, column_info = await self._get_table_sample_data(cursor, table_name)
+            
+            if sse_logger:
+                await sse_logger.progress(100, "Connection test completed successfully")
+            
+            # Close connection
+            cursor.close()
+            cnxn.close()
             
             return ConnectionTestResult(
                 success=True,
                 sample_data=sample_data,
+                column_info=column_info,
                 database_schema=database_schema,
                 task_id=task_id
             )
             
         except Exception as e:
             error_msg = f"Connection test failed: {str(e)}"
-            await sse_logger.error(error_msg)
+            if sse_logger:
+                await sse_logger.error(error_msg)
             return ConnectionTestResult(
                 success=False,
                 error_message=error_msg,
@@ -117,28 +144,59 @@ class ConnectionService:
             )
     
     async def _analyze_database_schema(self, cursor, sse_logger: SSELogger) -> Dict[str, Any]:
-        """Analyze entire database schema (all tables)"""
+        """Analyze entire database schema (all tables) - Enhanced version with better logging"""
         try:
-            # Get all tables in the database
-            cursor.execute("""
+            await sse_logger.info("Starting comprehensive schema analysis...")
+            
+            # First, let's see what database we're connected to
+            await asyncio.to_thread(cursor.execute, "SELECT DB_NAME() as current_database")
+            db_result = await asyncio.to_thread(cursor.fetchone)
+            current_db = db_result[0] if db_result else "Unknown"
+            await sse_logger.info(f"Connected to database: {current_db}")
+            
+            # Get all schemas in the database
+            await asyncio.to_thread(cursor.execute, """
+                SELECT DISTINCT SCHEMA_NAME 
+                FROM INFORMATION_SCHEMA.SCHEMATA 
+                WHERE SCHEMA_NAME NOT IN ('sys', 'INFORMATION_SCHEMA')
+                ORDER BY SCHEMA_NAME
+            """)
+            schemas = [row[0] for row in await asyncio.to_thread(cursor.fetchall)]
+            await sse_logger.info(f"Found schemas: {', '.join(schemas)}")
+            
+            # Get all tables in the database (including all schemas)
+            await asyncio.to_thread(cursor.execute, """
                 SELECT 
                     TABLE_SCHEMA,
                     TABLE_NAME,
                     TABLE_TYPE
                 FROM INFORMATION_SCHEMA.TABLES 
                 WHERE TABLE_TYPE = 'BASE TABLE'
+                  AND TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA')
                 ORDER BY TABLE_SCHEMA, TABLE_NAME
             """)
             
-            tables = cursor.fetchall()
+            tables = await asyncio.to_thread(cursor.fetchall)
+            await sse_logger.info(f"Found {len(tables)} tables total")
+            
+            # Log the first few tables for debugging
+            for i, table in enumerate(tables[:10]):
+                schema_name, table_name, table_type = table
+                await sse_logger.info(f"Table {i+1}: {schema_name}.{table_name} ({table_type})")
+            
+            if len(tables) > 10:
+                await sse_logger.info(f"... and {len(tables) - 10} more tables")
+            
             database_schema = {}
             
             for table in tables:
                 schema_name, table_name, table_type = table
                 full_table_name = f"{schema_name}.{table_name}"
                 
+                await sse_logger.info(f"Analyzing table: {full_table_name}")
+                
                 # Get columns for this table
-                cursor.execute(f"""
+                await asyncio.to_thread(cursor.execute, f"""
                     SELECT 
                         COLUMN_NAME,
                         DATA_TYPE,
@@ -152,14 +210,11 @@ class ConnectionService:
                     ORDER BY ORDINAL_POSITION
                 """)
                 
-                columns = cursor.fetchall()
+                columns = await asyncio.to_thread(cursor.fetchall)
                 column_info = []
                 
                 for col in columns:
                     col_name, data_type, is_nullable, default_val, max_length, precision, scale = col
-                    
-                    # Get sample values for this column
-                    sample_values = await self._get_column_sample_values(cursor, full_table_name, col_name)
                     
                     column_info.append({
                         "column_name": col_name,
@@ -169,24 +224,18 @@ class ConnectionService:
                         "max_length": max_length,
                         "precision": precision,
                         "scale": scale,
-                        "sample_values": sample_values
+                        "sample_values": []  # Empty for performance
                     })
-                
-                # Get table row count
-                try:
-                    cursor.execute(f"SELECT COUNT(*) FROM {full_table_name}")
-                    row_count = cursor.fetchone()[0]
-                except:
-                    row_count = 0
                 
                 database_schema[full_table_name] = {
                     "schema_name": schema_name,
                     "table_name": table_name,
                     "table_type": table_type,
                     "columns": column_info,
-                    "row_count": row_count
+                    "row_count": 0  # Skip row count for performance
                 }
             
+            await sse_logger.info(f"Schema analysis complete. Found {len(database_schema)} tables with columns.")
             return database_schema
             
         except Exception as e:
@@ -196,39 +245,49 @@ class ConnectionService:
     async def _get_column_sample_values(self, cursor, table_name: str, column_name: str) -> List[Any]:
         """Get sample values for a column"""
         try:
-            # Try to get non-null values
-            cursor.execute(f"""
-                SELECT TOP 5 [{column_name}]
-                FROM {table_name} 
-                WHERE [{column_name}] IS NOT NULL
-                ORDER BY NEWID()
-            """)
-            values = [row[0] for row in cursor.fetchall()]
-            return values
-        except:
+            await asyncio.to_thread(cursor.execute, f"SELECT TOP 5 [{column_name}] FROM {table_name} WHERE [{column_name}] IS NOT NULL")
+            rows = await asyncio.to_thread(cursor.fetchall)
+            return [str(row[0]) for row in rows if row[0] is not None]
+        except Exception as e:
+            logger.warning(f"Failed to get sample values for {table_name}.{column_name}: {e}")
             return []
     
-    async def _get_sample_data(self, cursor, table_name: str, sse_logger: SSELogger) -> List[Dict[str, Any]]:
-        """Get sample data from a table"""
+    async def _get_table_sample_data(self, cursor, table_name: str) -> tuple[List[Dict], List[Dict]]:
+        """Get sample data and column info for a table"""
         try:
-            cursor.execute(f"SELECT TOP 10 * FROM {table_name};")
-            columns = [column[0] for column in cursor.description]
-            rows = cursor.fetchall()
+            # Get sample data
+            await asyncio.to_thread(cursor.execute, f"SELECT TOP 10 * FROM {table_name};")
+            rows = await asyncio.to_thread(cursor.fetchall)
             
+            # Get column names
+            columns = [column[0] for column in cursor.description]
+            
+            # Convert to list of dictionaries
             sample_data = []
             for row in rows:
                 sample_data.append(dict(zip(columns, row)))
             
-            return sample_data
+            # Get column info
+            column_info = []
+            for i, column in enumerate(cursor.description):
+                column_info.append({
+                    "name": column[0],
+                    "type": str(column[1]),
+                    "nullable": column[6] if len(column) > 6 else True
+                })
+            
+            return sample_data, column_info
+            
         except Exception as e:
-            await sse_logger.error(f"Failed to get sample data: {str(e)}")
-            return []
+            logger.error(f"Failed to get sample data for {table_name}: {e}")
+            return [], []
     
     async def create_connection_for_user(
         self, 
         db: AsyncSession, 
         user: User, 
-        connection_data: ConnectionCreate
+        connection_data: ConnectionCreate,
+        database_schema: Optional[Dict[str, Any]] = None
     ) -> ConnectionResponse:
         """Create a new connection for a user"""
         try:
@@ -244,7 +303,9 @@ class ConnectionService:
                 driver=connection_data.driver,
                 encrypt=connection_data.encrypt,
                 trust_server_certificate=connection_data.trust_server_certificate,
-                status=ConnectionStatus.CREATED,
+                status=ConnectionStatus.TEST_SUCCESS,
+                database_schema=database_schema,
+                last_schema_refresh=datetime.utcnow() if database_schema else None,
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow()
             )
@@ -254,21 +315,10 @@ class ConnectionService:
             await db.refresh(connection)
             
             # Convert to response model
-            return ConnectionResponse(
-                id=connection.id,
-                name=connection.name,
-                server=connection.server,
-                database_name=connection.database_name,
-                username=connection.username,
-                driver=connection.driver,
-                encrypt=connection.encrypt,
-                trust_server_certificate=connection.trust_server_certificate,
-                status=connection.status,
-                created_at=connection.created_at,
-                updated_at=connection.updated_at,
-                database_schema=connection.database_schema,
-                last_schema_refresh=connection.last_schema_refresh
-            )
+            return ConnectionResponse.model_validate({
+                **connection.__dict__,
+                'id': str(connection.id)
+            })
             
         except Exception as e:
             await db.rollback()
@@ -293,21 +343,10 @@ class ConnectionService:
             if not connection:
                 return None
             
-            return ConnectionResponse(
-                id=connection.id,
-                name=connection.name,
-                server=connection.server,
-                database_name=connection.database_name,
-                username=connection.username,
-                driver=connection.driver,
-                encrypt=connection.encrypt,
-                trust_server_certificate=connection.trust_server_certificate,
-                status=connection.status,
-                created_at=connection.created_at,
-                updated_at=connection.updated_at,
-                database_schema=connection.database_schema,
-                last_schema_refresh=connection.last_schema_refresh
-            )
+            return ConnectionResponse.model_validate({
+                **connection.__dict__,
+                'id': str(connection.id)
+            })
             
         except Exception as e:
             logger.error(f"Failed to get user connection: {e}")
@@ -341,21 +380,10 @@ class ConnectionService:
             if not connection:
                 return None
             
-            return ConnectionResponse(
-                id=connection.id,
-                name=connection.name,
-                server=connection.server,
-                database_name=connection.database_name,
-                username=connection.username,
-                driver=connection.driver,
-                encrypt=connection.encrypt,
-                trust_server_certificate=connection.trust_server_certificate,
-                status=connection.status,
-                created_at=connection.created_at,
-                updated_at=connection.updated_at,
-                database_schema=connection.database_schema,
-                last_schema_refresh=connection.last_schema_refresh
-            )
+            return ConnectionResponse.model_validate({
+                **connection.__dict__,
+                'id': str(connection.id)
+            })
             
         except Exception as e:
             logger.error(f"Failed to get user connection by name: {e}")
@@ -373,21 +401,10 @@ class ConnectionService:
             connections = result.scalars().all()
             
             return [
-                ConnectionResponse(
-                    id=conn.id,
-                    name=conn.name,
-                    server=conn.server,
-                    database_name=conn.database_name,
-                    username=conn.username,
-                    driver=conn.driver,
-                    encrypt=conn.encrypt,
-                    trust_server_certificate=conn.trust_server_certificate,
-                    status=conn.status,
-                    created_at=conn.created_at,
-                    updated_at=conn.updated_at,
-                    database_schema=conn.database_schema,
-                    last_schema_refresh=conn.last_schema_refresh
-                )
+                ConnectionResponse.model_validate({
+                    **conn.__dict__,
+                    'id': str(conn.id)
+                })
                 for conn in connections
             ]
             
@@ -407,6 +424,13 @@ class ConnectionService:
             connection = await self.get_user_connection(db, user_id, connection_id)
             if not connection:
                 return False
+            
+            # First delete all training tasks associated with this connection
+            from app.models.database import TrainingTask
+            training_tasks_stmt = delete(TrainingTask).where(
+                TrainingTask.connection_id == connection_id
+            )
+            await db.execute(training_tasks_stmt)
             
             # Delete the connection
             stmt = delete(Connection).where(
@@ -447,7 +471,8 @@ class ConnectionService:
         self, 
         connection_data: ConnectionCreate, 
         connection_id: str, 
-        task_id: str
+        task_id: str,
+        db: AsyncSession
     ) -> ConnectionTestResult:
         """Refresh and store database schema for a connection"""
         sse_logger = SSELogger(sse_manager, task_id, "schema_refresh")
@@ -460,7 +485,7 @@ class ConnectionService:
             conn_str = self._build_odbc_connection_string(connection_data)
             
             try:
-                cnxn = pyodbc.connect(conn_str, timeout=30)
+                cnxn = await asyncio.to_thread(pyodbc.connect, conn_str, timeout=30)
                 cursor = cnxn.cursor()
                 await sse_logger.progress(30, "Connection successful, analyzing schema...")
                 
@@ -479,7 +504,7 @@ class ConnectionService:
             
             # Store schema in database
             await sse_logger.progress(80, "Storing schema information...")
-            await self._store_database_schema(connection_id, database_schema)
+            await self._store_database_schema(connection_id, database_schema, db)
             
             await sse_logger.progress(100, "Schema refresh completed successfully")
             
@@ -498,15 +523,20 @@ class ConnectionService:
                 task_id=task_id
             )
     
-    async def _store_database_schema(self, connection_id: str, database_schema: Dict[str, Any]):
+    async def _store_database_schema(self, connection_id: str, database_schema: Dict[str, Any], db: AsyncSession):
         """Store database schema in the connection record"""
         try:
-            from app.models.database import Connection
-            from sqlalchemy import update
+            stmt = update(Connection).where(
+                Connection.id == connection_id
+            ).values(
+                database_schema=database_schema,
+                last_schema_refresh=datetime.utcnow()
+            )
             
-            # This would need to be called with a database session
-            # For now, we'll just log the schema
-            logger.info(f"Storing schema for connection {connection_id}: {len(database_schema)} tables")
+            await db.execute(stmt)
+            await db.commit()
+            
+            logger.info(f"Stored schema for connection {connection_id}: {len(database_schema)} tables")
             
         except Exception as e:
             logger.error(f"Failed to store database schema: {e}")
