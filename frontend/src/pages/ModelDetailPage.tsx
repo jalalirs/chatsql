@@ -6,12 +6,13 @@ import ModelHeader from '../components/models/ModelHeader';
 import ModelTabs from '../components/models/ModelTabs';
 import ModelOverview from '../components/models/ModelOverview';
 import ModelTraining from '../components/models/ModelTraining';
+import ModelTrainingData from '../components/models/ModelTrainingData';
 import ModelTables from '../components/models/ModelTables';
 import ModelQuery from '../components/models/ModelQuery';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
 
-type TabType = 'overview' | 'training' | 'tables' | 'query';
+type TabType = 'overview' | 'tables' | 'training-data' | 'training' | 'query';
 
 const ModelDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -64,10 +65,12 @@ const ModelDetailPage: React.FC = () => {
     switch (activeTab) {
       case 'overview':
         return <ModelOverview model={model} onModelUpdate={handleModelUpdate} />;
-      case 'training':
-        return <ModelTraining model={model} onModelUpdate={handleModelUpdate} />;
       case 'tables':
         return <ModelTables model={model} onModelUpdate={handleModelUpdate} />;
+      case 'training-data':
+        return <ModelTrainingData model={model} onModelUpdate={handleModelUpdate} />;
+      case 'training':
+        return <ModelTraining model={model} onModelUpdate={handleModelUpdate} />;
       case 'query':
         return <ModelQuery model={model} />;
       default:
