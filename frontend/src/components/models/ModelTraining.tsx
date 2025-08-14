@@ -1563,6 +1563,13 @@ const TablesSchema: React.FC<{
               ...schemaCol,
               is_tracked: trackedCol ? trackedCol.is_tracked : false,
               description: trackedCol?.description || '',
+              // Include value information fields from tracked columns
+              value_categories: trackedCol?.value_categories || null,
+              value_range_min: trackedCol?.value_range_min || null,
+              value_range_max: trackedCol?.value_range_max || null,
+              value_distinct_count: trackedCol?.value_distinct_count || null,
+              value_data_type: trackedCol?.value_data_type || null,
+              value_sample_size: trackedCol?.value_sample_size || null,
               schema_order: schemaCol.ordinal_position || 999
             };
           });
@@ -1862,21 +1869,24 @@ const TablesSchema: React.FC<{
       return null;
     }
 
-    if (column.value_categories && column.value_categories.length > 0) {
-      const displayValues = column.value_categories.slice(0, 3);
-      const remaining = column.value_categories.length - 3;
+    // For numerical columns, prioritize showing range over categories
+    if (column.value_range_min && column.value_range_max) {
       return (
         <div className="text-xs text-gray-600 mt-1">
-          <span className="font-medium">Values:</span> {displayValues.join(', ')}
-          {remaining > 0 && <span className="text-gray-500"> +{remaining} more</span>}
+          <span className="font-medium">Range:</span> {column.value_range_min} to {column.value_range_max}
         </div>
       );
     }
 
-    if (column.value_range_min && column.value_range_max) {
+    // For categorical columns (no range), show categories
+    if (column.value_categories && column.value_categories.length > 0) {
+      const displayValues = column.value_categories.slice(0, 3);
+      const totalDistinct = column.value_distinct_count || column.value_categories.length;
+      const remaining = totalDistinct - 3;
       return (
         <div className="text-xs text-gray-600 mt-1">
-          <span className="font-medium">Range:</span> {column.value_range_min} - {column.value_range_max}
+          <span className="font-medium">Values:</span> {displayValues.join(', ')}
+          {remaining > 0 && <span className="text-gray-500"> +{remaining} more ({totalDistinct} total)</span>}
         </div>
       );
     }

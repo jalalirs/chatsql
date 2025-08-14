@@ -456,8 +456,11 @@ class TrainingService:
             value_analysis = await self._analyze_column_values(connection, table_name, column_info['column_name'], column_info['data_type'])
             await self._update_column_value_information(db, model_id, table_name, column_info['column_name'], value_analysis)
             
+            # Get stored value information from tracked columns
+            stored_value_info = await self._get_stored_column_value_info(db, model_id, table_name, column_info['column_name'])
+            
             # Build prompt for column description using stored value information
-            enhanced_column_info = {**column_info, **value_analysis}
+            enhanced_column_info = {**column_info, **value_analysis, **stored_value_info}
             prompt = await self._build_column_description_prompt(connection, table_name, enhanced_column_info, additional_instructions)
             
             logger.info(f"🔍 AI Prompt for single column {column_name}: {prompt}")
@@ -590,7 +593,9 @@ class TrainingService:
             # First, analyze and store column value information for all columns
             enhanced_columns = []
             for col in tracked_columns:
+                logger.info(f"🔍 Analyzing values for column {col['column_name']} in table {table_name}")
                 value_analysis = await self._analyze_column_values(connection, table_name, col['column_name'], col['data_type'])
+                logger.info(f"🔍 Value analysis result for {col['column_name']}: {value_analysis}")
                 await self._update_column_value_information(db, model_id, table_name, col['column_name'], value_analysis)
                 enhanced_columns.append({**col, **value_analysis})
             
@@ -928,6 +933,44 @@ class TrainingService:
             logger.error(f"Failed to update column description: {e}")
             await db.rollback()
     
+    async def _get_stored_column_value_info(self, db: AsyncSession, model_id: str, table_name: str, column_name: str) -> Dict[str, Any]:
+        """Get stored value information for a column from tracked columns"""
+        try:
+            # Find the tracked table for this model and table name
+            stmt = select(ModelTrackedTable).where(
+                ModelTrackedTable.model_id == model_id,
+                ModelTrackedTable.table_name == table_name
+            )
+            result = await db.execute(stmt)
+            tracked_table = result.scalar_one_or_none()
+            
+            if not tracked_table:
+                return {}
+            
+            # Find the tracked column
+            stmt = select(ModelTrackedColumn).where(
+                ModelTrackedColumn.model_tracked_table_id == tracked_table.id,
+                ModelTrackedColumn.column_name == column_name
+            )
+            result = await db.execute(stmt)
+            tracked_column = result.scalar_one_or_none()
+            
+            if tracked_column:
+                return {
+                    'value_categories': tracked_column.value_categories,
+                    'value_range_min': tracked_column.value_range_min,
+                    'value_range_max': tracked_column.value_range_max,
+                    'value_distinct_count': tracked_column.value_distinct_count,
+                    'value_data_type': tracked_column.value_data_type,
+                    'value_sample_size': tracked_column.value_sample_size
+                }
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Failed to get stored column value info: {e}")
+            return {}
+
     async def _update_column_value_information(
         self,
         db: AsyncSession,
