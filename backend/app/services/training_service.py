@@ -1315,6 +1315,45 @@ Generate exactly {num_examples} examples:"""
             logger.error(f"Failed to create training column: {e}")
             raise
 
+    async def update_tracked_column_description(
+        self, 
+        db: AsyncSession, 
+        column_id: str, 
+        description: str
+    ) -> Optional[Dict[str, Any]]:
+        """Update tracked column description"""
+        try:
+            stmt = select(ModelTrackedColumn).where(ModelTrackedColumn.id == column_id)
+            result = await db.execute(stmt)
+            column = result.scalar_one_or_none()
+            
+            if not column:
+                return None
+            
+            # Update description
+            column.description = description
+            await db.commit()
+            await db.refresh(column)
+            
+            # Get the tracked table info
+            stmt = select(ModelTrackedTable).where(ModelTrackedTable.id == column.model_tracked_table_id)
+            result = await db.execute(stmt)
+            tracked_table = result.scalar_one_or_none()
+            
+            return {
+                "id": str(column.id),
+                "table_name": tracked_table.table_name if tracked_table else "Unknown",
+                "column_name": column.column_name,
+                "data_type": "Unknown",
+                "description": column.description,
+                "value_range": None,
+                "created_at": column.created_at.isoformat() if column.created_at else None
+            }
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Failed to update tracked column description: {e}")
+            return None
+
     async def update_training_column(
         self, 
         db: AsyncSession, 

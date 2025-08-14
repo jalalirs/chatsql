@@ -302,20 +302,32 @@ async def get_training_columns(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get training columns: {str(e)}")
 
-@router.put("/columns/{column_id}", response_model=ModelTrainingColumnResponse)
+@router.put("/columns/{column_id}")
 async def update_training_column(
     column_data: ModelTrainingColumnUpdate,
     column_id: UUID = Path(..., description="Training column ID"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Update training column"""
+    """Update training column description"""
     try:
+        # Try to update as tracked column first
+        column = await training_service.update_tracked_column_description(
+            db=db,
+            column_id=str(column_id),
+            description=column_data.description
+        )
+        
+        if column:
+            return column
+        
+        # Fallback to old training column method
         column = await training_service.update_training_column(
             db=db,
             column_id=str(column_id),
             column_data=column_data
         )
+        
         if not column:
             raise HTTPException(status_code=404, detail="Training column not found")
         return column
