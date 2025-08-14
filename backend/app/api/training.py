@@ -1,10 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
+from sse_starlette import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional, Dict, Any
 from uuid import UUID
+import asyncio
+import json
 
 from app.core.database import get_async_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_from_query
+
+logger = logging.getLogger(__name__)
 from app.models.schemas import (
     ModelTrainingDocumentationCreate, ModelTrainingDocumentationUpdate, ModelTrainingDocumentationResponse,
     ModelTrainingQuestionCreate, ModelTrainingQuestionUpdate, ModelTrainingQuestionResponse,
@@ -271,6 +278,35 @@ async def delete_training_question(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete training question: {str(e)}")
 
+@router.post("/questions/{question_id}/validate")
+async def validate_training_question(
+    question_id: UUID = Path(..., description="Training question ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Validate training question by executing the SQL query"""
+    try:
+        result = await training_service.validate_training_question(
+            db=db,
+            user=current_user,
+            question_id=str(question_id)
+        )
+        
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["error_message"])
+        
+        return {
+            "success": True,
+            "is_validated": result["is_validated"],
+            "validation_notes": result["validation_notes"],
+            "execution_result": result.get("execution_result"),
+            "message": result["message"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to validate training question: {str(e)}")
+
 # Training Columns Management
 @router.post("/models/{model_id}/columns", response_model=ModelTrainingColumnResponse)
 async def create_training_column(
@@ -361,6 +397,7 @@ async def generate_column_descriptions(
     scope: str = Query("all", description="Scope: 'column', 'table', or 'all'"),
     table_name: Optional[str] = Query(None, description="Table name (required if scope is 'table')"),
     column_name: Optional[str] = Query(None, description="Column name (required if scope is 'column')"),
+    additional_instructions: Optional[str] = Query(None, description="Additional instructions for AI generation"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -377,7 +414,8 @@ async def generate_column_descriptions(
             model_id=str(model_id),
             scope=scope,
             table_name=table_name,
-            column_name=column_name
+            column_name=column_name,
+            additional_instructions=additional_instructions
         )
         
         if not result.success:
@@ -388,7 +426,8 @@ async def generate_column_descriptions(
             "model_id": str(model_id),
             "scope": scope,
             "generated_count": result.generated_count,
-            "message": f"Generated {result.generated_count} column descriptions"
+            "error_message": result.error_message,
+            "generated_descriptions": result.generated_descriptions
         }
     except HTTPException:
         raise
@@ -399,6 +438,7 @@ async def generate_column_descriptions(
 async def generate_table_descriptions(
     model_id: UUID = Path(..., description="Model ID"),
     table_name: Optional[str] = Query(None, description="Specific table name (optional)"),
+    additional_instructions: Optional[str] = Query(None, description="Additional instructions for AI generation"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -408,19 +448,27 @@ async def generate_table_descriptions(
             db=db,
             user=current_user,
             model_id=str(model_id),
-            table_name=table_name
+            table_name=table_name,
+            additional_instructions=additional_instructions
         )
         
         if not result.success:
             raise HTTPException(status_code=400, detail=result.error_message)
         
-        return {
+        response_data = {
             "success": True,
             "model_id": str(model_id),
             "table_name": table_name,
             "generated_count": result.generated_count,
-            "message": f"Generated {result.generated_count} table descriptions"
+            "error_message": result.error_message,
+            "generated_descriptions": result.generated_descriptions
         }
+        
+        logger.info(f"🔍 API Response data: {response_data}")
+        logger.info(f"🔍 result.generated_descriptions type: {type(result.generated_descriptions)}")
+        logger.info(f"🔍 result.generated_descriptions value: {result.generated_descriptions}")
+        
+        return response_data
     except HTTPException:
         raise
     except Exception as e:
@@ -429,6 +477,7 @@ async def generate_table_descriptions(
 @router.post("/models/{model_id}/generate-all-descriptions")
 async def generate_all_descriptions(
     model_id: UUID = Path(..., description="Model ID"),
+    additional_instructions: Optional[str] = Query(None, description="Additional instructions for AI generation"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -437,7 +486,8 @@ async def generate_all_descriptions(
         result = await training_service.generate_all_descriptions(
             db=db,
             user=current_user,
-            model_id=str(model_id)
+            model_id=str(model_id),
+            additional_instructions=additional_instructions
         )
         
         if not result.success:
@@ -447,12 +497,165 @@ async def generate_all_descriptions(
             "success": True,
             "model_id": str(model_id),
             "generated_count": result.generated_count,
-            "message": f"Generated {result.generated_count} descriptions across all tables"
+            "error_message": result.error_message,
+            "generated_descriptions": result.generated_descriptions
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate all descriptions: {str(e)}")
+
+@router.get("/models/{model_id}/generate-all-descriptions-sse")
+async def generate_all_descriptions_sse(
+    request: Request,
+    model_id: UUID = Path(..., description="Model ID"),
+    additional_instructions: Optional[str] = Query(None, description="Additional instructions for AI generation"),
+    current_user: User = Depends(get_current_user_from_query),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Generate AI descriptions for all tracked columns across all tables with SSE progress updates"""
+    
+    async def generate_descriptions_stream():
+        try:
+            # Send initial progress
+            yield {
+                "event": "progress",
+                "data": json.dumps({
+                    "status": "started",
+                    "message": "Starting description generation...",
+                    "progress": 0
+                })
+            }
+            
+            # Get tracked tables first
+            tracked_tables = await training_service._get_model_tracked_tables(db, str(model_id))
+            total_tables = len(tracked_tables)
+            
+            if total_tables == 0:
+                yield {
+                    "event": "progress",
+                    "data": json.dumps({
+                        "status": "completed",
+                        "message": "No tracked tables found",
+                        "progress": 100,
+                        "generated_count": 0
+                    })
+                }
+                return
+            
+            # Send progress update
+            yield {
+                "event": "progress",
+                "data": json.dumps({
+                    "status": "processing",
+                    "message": f"Found {total_tables} tracked tables",
+                    "progress": 10
+                })
+            }
+            
+            generated_count = 0
+            processed_tables = 0
+            all_generated_descriptions = {}
+            
+            # Process each table
+            for table_info in tracked_tables:
+                try:
+                    # Send table progress
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps({
+                            "status": "processing",
+                            "message": f"Processing table: {table_info.table_name}",
+                            "progress": 10 + (processed_tables / total_tables) * 80,
+                            "current_table": table_info.table_name
+                        })
+                    }
+                    
+                    # Get tracked columns for this table
+                    tracked_columns = await training_service._get_model_tracked_columns_for_table(db, str(model_id), table_info.table_name)
+                    
+                    if tracked_columns:
+                        # Get connection for database access
+                        model = await training_service._get_model_and_verify_ownership(db, str(model_id), current_user)
+                        from app.services.connection_service import connection_service
+                        connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
+                        
+                        # Generate descriptions for this table
+                        descriptions = await training_service._generate_tracked_column_descriptions(
+                            db, connection, table_info.table_name, tracked_columns, str(model_id), additional_instructions
+                        )
+                        
+                        # Update column descriptions
+                        for col_name, description in descriptions.items():
+                            await training_service._update_column_description(db, str(model_id), table_info.table_name, col_name, description)
+                            generated_count += 1
+                        
+                        # Collect descriptions for response
+                        all_generated_descriptions[table_info.table_name] = descriptions
+                        
+                        # Send table completion progress
+                        yield {
+                            "event": "progress",
+                            "data": json.dumps({
+                                "status": "processing",
+                                "message": f"Completed table: {table_info.table_name} ({len(descriptions)} descriptions)",
+                                "progress": 10 + (processed_tables / total_tables) * 80,
+                                "current_table": table_info.table_name,
+                                "table_generated": len(descriptions)
+                            })
+                        }
+                    
+                    processed_tables += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error processing table {table_info.table_name}: {e}")
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps({
+                            "status": "processing",
+                            "message": f"Error processing table {table_info.table_name}: {str(e)}",
+                            "progress": 10 + (processed_tables / total_tables) * 80,
+                            "current_table": table_info.table_name,
+                            "error": str(e)
+                        })
+                    }
+                    processed_tables += 1
+            
+            # Send completion
+            yield {
+                "event": "generation_completed",
+                "data": json.dumps({
+                    "status": "completed",
+                    "message": f"Generated {generated_count} descriptions across {total_tables} tables",
+                    "progress": 100,
+                    "generated_count": generated_count,
+                    "total_tables": total_tables,
+                    "generated_descriptions": all_generated_descriptions
+                })
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in description generation stream: {e}")
+            yield {
+                "event": "generation_error",
+                "data": json.dumps({
+                    "status": "error",
+                    "message": f"Failed to generate descriptions: {str(e)}",
+                    "error": str(e)
+                })
+            }
+    
+    return EventSourceResponse(
+        generate_descriptions_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 # Enhanced Training Generation Endpoint
 @router.post("/models/{model_id}/generate-questions", response_model=QuestionGenerationResponse)
@@ -464,6 +667,15 @@ async def generate_enhanced_questions(
 ):
     """Generate enhanced training questions with specific scope and column associations"""
     try:
+        # Debug: Log what's received from frontend
+        logger.info(f"=== API RECEIVED SCOPE CONFIG ===")
+        logger.info(f"Additional Instructions: '{scope_config.additional_instructions}'")
+        logger.info(f"Type: {scope_config.type}")
+        logger.info(f"Tables: {scope_config.tables}")
+        logger.info(f"Columns: {scope_config.columns}")
+        logger.info(f"Num Questions: {scope_config.num_questions}")
+        logger.info(f"=== END API DEBUG ===")
+        
         result = await training_service.generate_enhanced_training_questions(
             db=db,
             user=current_user,

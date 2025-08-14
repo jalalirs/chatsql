@@ -326,6 +326,14 @@ class ModelTrackedColumn(Base):
     is_tracked = Column(Boolean, default=True)
     description = Column(Text, nullable=True)
     
+    # Value information fields
+    value_categories = Column(JSONB, nullable=True)  # For categorical data: ["Forward", "Defender", "Midfielder"]
+    value_range_min = Column(String(100), nullable=True)  # For numerical data: min value
+    value_range_max = Column(String(100), nullable=True)  # For numerical data: max value
+    value_distinct_count = Column(Integer, nullable=True)  # Number of distinct values
+    value_data_type = Column(String(50), nullable=True)  # categorical, numerical, temporal, high_cardinality
+    value_sample_size = Column(Integer, nullable=True)  # For high cardinality: sample size used
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

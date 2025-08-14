@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Save, X, Play, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react';
-import { ModelDetail } from '../../types/models';
+import { Plus, Edit2, Trash2, Save, X, Play, AlertCircle, CheckCircle, Eye, EyeOff, Database, Edit } from 'lucide-react';
+import { ModelDetail, ModelTrackedColumn } from '../../types/models';
 import { 
   getTrainingData, 
   trainModel,
@@ -12,9 +12,15 @@ import {
   getQuestions,
   updateQuestion,
   deleteQuestion,
-  generateEnhancedQuestions
+  generateEnhancedQuestions,
+  validateQuestion,
+  generateColumnDescriptions,
+  generateTableDescriptions,
+  generateAllDescriptions,
+  getDocumentation
 } from '../../services/training';
 import { getTemplates, DocumentationTemplate } from '../../services/templates';
+import { getModelTrackedColumns, getModelTrackedTables } from '../../services/models';
 
 interface ModelTrainingProps {
   model: ModelDetail;
@@ -29,6 +35,17 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate }) =
   const [showAddDocumentation, setShowAddDocumentation] = useState(false);
   const [showAddQuestion, setShowAddQuestion] = useState(false);
   const [showAddColumn, setShowAddColumn] = useState(false);
+  
+  // Additional features state
+  const [additionalInstructions, setAdditionalInstructions] = useState('');
+  const [additionalInstructionsColumns, setAdditionalInstructionsColumns] = useState('');
+  const [validatingQuestion, setValidatingQuestion] = useState<string | null>(null);
+  const [validationResults, setValidationResults] = useState<{[key: string]: any[]}>({});
+  const [showValidationResults, setShowValidationResults] = useState<Set<string>>(new Set());
+  const [trackedTables, setTrackedTables] = useState<any[]>([]);
+  const [trackedColumns, setTrackedColumns] = useState<ModelTrackedColumn[]>([]);
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [documentation, setDocumentation] = useState<any[]>([]);
 
   useEffect(() => {
     loadTrainingData();
@@ -39,6 +56,25 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate }) =
       setLoading(true);
       const data = await getTrainingData(model.id);
       setTrainingData(data);
+      
+      // Load additional data for new features
+      const tablesData = await getModelTrackedTables(model.id);
+      setTrackedTables(tablesData);
+      
+      // Load columns for each table
+      const allColumns: ModelTrackedColumn[] = [];
+      for (const table of tablesData) {
+        const columnsData = await getModelTrackedColumns(model.id, table.id);
+        allColumns.push(...columnsData);
+      }
+      setTrackedColumns(allColumns);
+      
+      const questionsData = await getQuestions(model.id);
+      setQuestions(questionsData.questions || []);
+      
+      const docsData = await getDocumentation(model.id);
+      setDocumentation(docsData.documentation || []);
+      
     } catch (error) {
       console.error('Failed to load training data:', error);
     } finally {
@@ -57,6 +93,50 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate }) =
     } finally {
       setTraining(false);
     }
+  };
+
+  const handleValidate = async (questionId: string) => {
+    try {
+      setValidatingQuestion(questionId);
+      
+      const result = await validateQuestion(questionId);
+      
+      // Update validation results
+      setValidationResults(prev => ({
+        ...prev,
+        [questionId]: result.execution_result || []
+      }));
+
+      // Update questions list
+      const updatedQuestions = questions.map(q => 
+        q.id === questionId 
+          ? { ...q, is_validated: result.is_validated, validation_notes: result.validation_notes }
+          : q
+      );
+      setQuestions(updatedQuestions);
+
+      // Show results if successful
+      if (result.is_validated && result.execution_result) {
+        setShowValidationResults(prev => new Set(prev).add(questionId));
+      }
+
+    } catch (error) {
+      console.error('Failed to validate question:', error);
+    } finally {
+      setValidatingQuestion(null);
+    }
+  };
+
+  const toggleValidationResults = (questionId: string) => {
+    setShowValidationResults(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(questionId)) {
+        newSet.delete(questionId);
+      } else {
+        newSet.add(questionId);
+      }
+      return newSet;
+    });
   };
 
   if (loading) {
@@ -488,6 +568,12 @@ const TrainingQuestions: React.FC<{
     validation_notes: ''
   });
 
+  // Additional features state
+  const [additionalInstructions, setAdditionalInstructions] = useState('');
+  const [validatingQuestion, setValidatingQuestion] = useState<string | null>(null);
+  const [validationResults, setValidationResults] = useState<{[key: string]: any[]}>({});
+  const [showValidationResults, setShowValidationResults] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     loadQuestions();
     loadTrackedTables();
@@ -525,8 +611,16 @@ const TrainingQuestions: React.FC<{
             return {
               ...schemaCol,
               is_tracked: trackedCol ? trackedCol.is_tracked : false,
-              description: trackedCol?.description || ''
+              description: trackedCol?.description || '',
+              schema_order: schemaCol.ordinal_position || 999 // Add schema order for sorting
             };
+          });
+          
+          // Sort columns by their position in the database schema
+          mergedColumns.sort((a, b) => {
+            const orderA = a.schema_order || 999;
+            const orderB = b.schema_order || 999;
+            return orderA - orderB;
           });
           
           setTableColumns(prev => ({
@@ -596,7 +690,8 @@ const TrainingQuestions: React.FC<{
           type: inferredType,
           tables: generationScope.tables,
           columns: generationScope.columns,
-          num_questions: generationScope.numQuestions
+          num_questions: generationScope.numQuestions,
+          additional_instructions: additionalInstructions
         },
         (progress) => {
           setGenerationProgress(prev => ({
@@ -703,6 +798,50 @@ const TrainingQuestions: React.FC<{
       newExpanded.add(questionId);
     }
     setExpandedQuestions(newExpanded);
+  };
+
+  const handleValidate = async (questionId: string) => {
+    try {
+      setValidatingQuestion(questionId);
+      
+      const result = await validateQuestion(questionId);
+      
+      // Update validation results
+      setValidationResults(prev => ({
+        ...prev,
+        [questionId]: result.execution_result || []
+      }));
+
+      // Update questions list
+      const updatedQuestions = questions.map(q => 
+        q.id === questionId 
+          ? { ...q, is_validated: result.is_validated, validation_notes: result.validation_notes }
+          : q
+      );
+      setQuestions(updatedQuestions);
+
+      // Show results if successful
+      if (result.is_validated && result.execution_result) {
+        setShowValidationResults(prev => new Set(prev).add(questionId));
+      }
+
+    } catch (error) {
+      console.error('Failed to validate question:', error);
+    } finally {
+      setValidatingQuestion(null);
+    }
+  };
+
+  const toggleValidationResults = (questionId: string) => {
+    setShowValidationResults(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(questionId)) {
+        newSet.delete(questionId);
+      } else {
+        newSet.add(questionId);
+      }
+      return newSet;
+    });
   };
 
   const getSourceBadgeColor = (generatedBy: string) => {
@@ -988,6 +1127,20 @@ const TrainingQuestions: React.FC<{
            </div>
          </div>
 
+        {/* Additional Instructions */}
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Additional Instructions for AI Generation
+          </label>
+          <textarea
+            value={additionalInstructions}
+            onChange={(e) => setAdditionalInstructions(e.target.value)}
+            placeholder="Provide specific instructions for question generation (e.g., focus on specific topics, use certain terminology, write in Arabic, etc.)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            rows={3}
+          />
+        </div>
+
         {/* Summary */}
         <div className="grid grid-cols-4 gap-4">
           <div className="bg-blue-50 rounded-lg p-4">
@@ -1178,6 +1331,18 @@ const TrainingQuestions: React.FC<{
                     >
                       <Trash2 size={16} />
                     </button>
+                    <button
+                      onClick={() => handleValidate(question.id)}
+                      disabled={validatingQuestion === question.id}
+                      className="p-1 text-gray-400 hover:text-purple-600 transition-colors disabled:opacity-50"
+                      title="Validate Query"
+                    >
+                      {validatingQuestion === question.id ? (
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
+                      ) : (
+                        <Database size={16} />
+                      )}
+                    </button>
                   </div>
                 </div>
                 
@@ -1214,6 +1379,50 @@ const TrainingQuestions: React.FC<{
                   <div className="mb-3">
                     <h4 className="text-sm font-medium text-gray-700 mb-1">Notes</h4>
                     <p className="text-sm text-gray-600 bg-yellow-50 p-2 rounded">{question.validation_notes}</p>
+                  </div>
+                )}
+
+                {/* Query Results */}
+                {validationResults[question.id] && showValidationResults.has(question.id) && (
+                  <div className="mb-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div className="flex justify-between items-center mb-2">
+                      <h4 className="text-sm font-medium text-blue-800">Query Results</h4>
+                      <button 
+                        onClick={() => toggleValidationResults(question.id)}
+                        className="text-blue-600 hover:text-blue-800 text-sm"
+                      >
+                        Hide
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-blue-200">
+                            {Object.keys(validationResults[question.id][0] || {}).map(key => (
+                              <th key={key} className="text-left py-2 px-2 font-medium text-blue-800">
+                                {key}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {validationResults[question.id].slice(0, 10).map((row: any, index: number) => (
+                            <tr key={index} className="border-b border-blue-100">
+                              {Object.values(row).map((value: any, cellIndex: number) => (
+                                <td key={cellIndex} className="py-2 px-2 text-blue-700">
+                                  {String(value)}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {validationResults[question.id].length > 10 && (
+                        <p className="text-xs text-blue-600 mt-2">
+                          Showing first 10 of {validationResults[question.id].length} rows
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
                 
@@ -1298,6 +1507,9 @@ const TablesSchema: React.FC<{
   const [editingDescription, setEditingDescription] = useState<{tableId: string, columnName: string} | null>(null);
   const [editContent, setEditContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  
+  // Additional features state
+  const [additionalInstructionsColumns, setAdditionalInstructionsColumns] = useState('');
 
   useEffect(() => {
     loadTrackedTables();
@@ -1344,22 +1556,33 @@ const TablesSchema: React.FC<{
             actualColumnsMap.set(col.column_name, col);
           });
           
-          // Use tracked columns directly (they now contain AI descriptions)
-          const tableColumnsData: any[] = [];
-          for (const trackedCol of trackedColumns) {
-            if (trackedCol.is_tracked) {
-              // Get the actual data type from the database schema
-              const actualCol = actualColumnsMap.get(trackedCol.column_name);
-              const dataType = actualCol ? actualCol.data_type : 'Unknown';
-              
-              tableColumnsData.push({
-                ...trackedCol,
-                data_type: dataType,
-                description: trackedCol.description || '',
-                description_source: 'manual' // Will be updated when AI generates descriptions
-              });
-            }
-          }
+          // Use the same approach as TrainingQuestions - merge schema with tracked columns
+          const mergedColumns = actualColumns.map(schemaCol => {
+            const trackedCol = trackedColumns.find(tc => tc.column_name === schemaCol.column_name);
+            return {
+              ...schemaCol,
+              is_tracked: trackedCol ? trackedCol.is_tracked : false,
+              description: trackedCol?.description || '',
+              schema_order: schemaCol.ordinal_position || 999
+            };
+          });
+          
+          // Filter to only show tracked columns
+          const tableColumnsData = mergedColumns.filter(col => col.is_tracked);
+          
+          // Sort columns by their position in the database schema
+          tableColumnsData.sort((a, b) => {
+            const orderA = a.schema_order || 999;
+            const orderB = b.schema_order || 999;
+            return orderA - orderB;
+          });
+          
+          // Sort columns by their position in the database schema
+          tableColumnsData.sort((a, b) => {
+            const orderA = a.schema_order || 999;
+            const orderB = b.schema_order || 999;
+            return orderA - orderB;
+          });
           
           console.log(`🔍 Table ${table.table_name} has ${tableColumnsData.length} columns for display`);
           setTableColumns(prev => ({
@@ -1464,33 +1687,59 @@ const TablesSchema: React.FC<{
 
   const handleGenerateAIDescription = async (tableId: string, columnName: string, dataType: string) => {
     try {
+      console.log('🔍 handleGenerateAIDescription called with:', { tableId, columnName, dataType });
       setSubmitting(true);
       
       // Find the column to update
       const columns = tableColumns[tableId];
       const columnToUpdate = columns.find((col: any) => col.column_name === columnName);
       
+      console.log('🔍 Found column to update:', columnToUpdate);
+      
       if (columnToUpdate) {
         // Find the table name for this column
         const table = trackedTables.find(t => t.id === tableId);
+        console.log('🔍 Found table:', table);
+        
         if (table) {
+          console.log('🔍 Calling generateColumnDescriptions with:', {
+            modelId,
+            scope: 'column',
+            tableName: table.table_name,
+            columnName,
+            additionalInstructions: additionalInstructionsColumns
+          });
+          
           // Call the AI generation endpoint
           const { generateColumnDescriptions } = await import('../../services/training');
+          
           const result = await generateColumnDescriptions(
             modelId, 
             'column', 
             table.table_name, 
-            columnName
+            columnName,
+            additionalInstructionsColumns
           );
           
+          console.log('🔍 generateColumnDescriptions result:', result);
+          
           if (result.success) {
-            // Reload the data to get the updated descriptions
-            // Add a small delay to ensure the database has time to update
-            setTimeout(async () => {
-              await loadTrackedTables();
-            }, 1000);
+            console.log('✅ Successfully generated AI description');
+            // Update the local state with the new description instead of reloading
+            setTableColumns(prevColumns => {
+              const updatedColumns = { ...prevColumns };
+              if (updatedColumns[tableId]) {
+                updatedColumns[tableId] = updatedColumns[tableId].map((col: any) => {
+                  if (col.column_name === columnName) {
+                    return { ...col, description: result.generated_descriptions?.[columnName] || col.description };
+                  }
+                  return col;
+                });
+              }
+              return updatedColumns;
+            });
           } else {
-            console.error('Failed to generate AI description:', result.message);
+            console.error('Failed to generate AI description:', result.error_message);
           }
         }
       }
@@ -1503,20 +1752,41 @@ const TablesSchema: React.FC<{
 
   const handleGenerateTableDescriptions = async (tableId: string) => {
     try {
+      console.log('🔍 handleGenerateTableDescriptions called with tableId:', tableId);
       setSubmitting(true);
       
       const table = trackedTables.find(t => t.id === tableId);
       if (table) {
         const { generateTableDescriptions } = await import('../../services/training');
-        const result = await generateTableDescriptions(modelId, table.table_name);
+        
+        console.log('🔍 Calling generateTableDescriptions with:', { modelId, tableName: table.table_name, additionalInstructionsColumns });
+        const result = await generateTableDescriptions(modelId, table.table_name, additionalInstructionsColumns);
+        console.log('🔍 generateTableDescriptions result:', result);
         
         if (result.success) {
-          console.log('✅ Successfully generated table descriptions:', result.message);
+          console.log('✅ Successfully generated table descriptions:', result.generated_count, 'descriptions generated');
           
-          // Reload the tracked columns to get the updated descriptions
-          await loadTrackedTables();
+          // Update the local state with the new descriptions instead of reloading
+          if (result.generated_descriptions) {
+            console.log('🔍 Updating table columns with generated descriptions:', result.generated_descriptions);
+            setTableColumns(prevColumns => {
+              const updatedColumns = { ...prevColumns };
+              if (updatedColumns[tableId]) {
+                updatedColumns[tableId] = updatedColumns[tableId].map((col: any) => {
+                  const tableDescriptions = result.generated_descriptions[table.table_name];
+                  const newDescription = tableDescriptions ? tableDescriptions[col.column_name] : null;
+                  if (newDescription) {
+                    console.log(`🔍 Updating column ${col.column_name} with description:`, newDescription);
+                    return { ...col, description: newDescription };
+                  }
+                  return col;
+                });
+              }
+              return updatedColumns;
+            });
+          }
         } else {
-          console.error('Failed to generate table descriptions:', result.message);
+          console.error('Failed to generate table descriptions:', result.error_message);
         }
       }
     } catch (error) {
@@ -1528,25 +1798,93 @@ const TablesSchema: React.FC<{
 
   const handleGenerateAllDescriptions = async () => {
     try {
+      console.log('🔍 handleGenerateAllDescriptions called');
+      console.log('🔍 modelId:', modelId);
+      console.log('🔍 additionalInstructionsColumns:', additionalInstructionsColumns);
+      
       setSubmitting(true);
       
-      const { generateAllDescriptions } = await import('../../services/training');
-      const result = await generateAllDescriptions(modelId);
+      const { generateAllDescriptionsSSE } = await import('../../services/training');
+      const { sseConnection } = await import('../../services/sse');
+      console.log('🔍 generateAllDescriptionsSSE function imported');
       
-      if (result.success) {
-        console.log('✅ Successfully generated all descriptions:', result.message);
-        
-        // Reload the tracked columns to get the updated descriptions
-        await loadTrackedTables();
-      } else {
-        console.error('Failed to generate all descriptions:', result.message);
-      }
+      // Get the SSE stream URL
+      const streamUrl = await generateAllDescriptionsSSE(modelId, additionalInstructionsColumns);
+      console.log('🔍 SSE stream URL:', streamUrl);
+      
+      // Connect to SSE stream
+      sseConnection.connect(streamUrl, {
+        onProgress: (data) => {
+          console.log('🔍 SSE Progress:', data);
+          // You can add progress UI here if needed
+        },
+        onCompleted: (data) => {
+          console.log('✅ SSE Completed:', data);
+          if (data.generated_count > 0) {
+            // Update the local state with the new descriptions instead of reloading
+            // The SSE response should include the generated descriptions
+            if (data.generated_descriptions) {
+              setTableColumns(prevColumns => {
+                const updatedColumns = { ...prevColumns };
+                Object.entries(data.generated_descriptions).forEach(([tableName, tableDescriptions]: [string, any]) => {
+                  // Find the table ID for this table name
+                  const table = trackedTables.find(t => t.table_name === tableName);
+                  if (table && updatedColumns[table.id]) {
+                    updatedColumns[table.id] = updatedColumns[table.id].map((col: any) => {
+                      const newDescription = tableDescriptions[col.column_name];
+                      if (newDescription) {
+                        return { ...col, description: newDescription };
+                      }
+                      return col;
+                    });
+                  }
+                });
+                return updatedColumns;
+              });
+            }
+          }
+          setSubmitting(false);
+        },
+        onError: (data) => {
+          console.error('❌ SSE Error:', data);
+          setSubmitting(false);
+        }
+      });
+      
     } catch (error) {
       console.error('Failed to generate all descriptions:', error);
-    } finally {
       setSubmitting(false);
     }
   };
+
+  const formatValueInfo = (column: any) => {
+    if (!column.value_categories && !column.value_range_min && !column.value_range_max) {
+      return null;
+    }
+
+    if (column.value_categories && column.value_categories.length > 0) {
+      const displayValues = column.value_categories.slice(0, 3);
+      const remaining = column.value_categories.length - 3;
+      return (
+        <div className="text-xs text-gray-600 mt-1">
+          <span className="font-medium">Values:</span> {displayValues.join(', ')}
+          {remaining > 0 && <span className="text-gray-500"> +{remaining} more</span>}
+        </div>
+      );
+    }
+
+    if (column.value_range_min && column.value_range_max) {
+      return (
+        <div className="text-xs text-gray-600 mt-1">
+          <span className="font-medium">Range:</span> {column.value_range_min} - {column.value_range_max}
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+
 
   if (loading) {
     return (
@@ -1580,6 +1918,20 @@ const TablesSchema: React.FC<{
         >
           {submitting ? 'Generating...' : 'Generate All Descriptions'}
         </button>
+      </div>
+
+      {/* Additional Instructions for Columns */}
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Additional Instructions for AI Generation
+        </label>
+        <textarea
+          value={additionalInstructionsColumns}
+          onChange={(e) => setAdditionalInstructionsColumns(e.target.value)}
+          placeholder="Provide specific instructions for column description generation"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          rows={3}
+        />
       </div>
       
       {trackedTables.length === 0 ? (
@@ -1642,9 +1994,12 @@ const TablesSchema: React.FC<{
                                   rows={2}
                                 />
                               ) : (
-                                <span className={column.description ? 'text-gray-900' : 'text-gray-400 italic'}>
-                                  {column.description || 'No description'}
-                                </span>
+                                <div>
+                                  <span className={column.description ? 'text-gray-900' : 'text-gray-400 italic'}>
+                                    {column.description || 'No description'}
+                                  </span>
+                                  {formatValueInfo(column)}
+                                </div>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-500">

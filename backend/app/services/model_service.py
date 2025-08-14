@@ -421,6 +421,14 @@ class ModelService:
         for column in new_columns:
             await self.db.refresh(column)
         
+        # Analyze and store value information for tracked columns
+        if new_columns:
+            logger.info(f"Starting value analysis for {len(new_columns)} tracked columns in table {tracked_table.table_name}")
+            await self._analyze_and_store_column_values(model_id, tracked_table.table_name, new_columns)
+            logger.info(f"Completed value analysis for tracked columns in table {tracked_table.table_name}")
+        else:
+            logger.info(f"No new columns to analyze for table {tracked_table.table_name}")
+        
         return [
             ModelTrackedColumnResponse(
                 id=column.id,
@@ -428,9 +436,139 @@ class ModelService:
                 column_name=column.column_name,
                 is_tracked=column.is_tracked,
                 description=column.description,
+                value_categories=column.value_categories,
+                value_range_min=column.value_range_min,
+                value_range_max=column.value_range_max,
+                value_distinct_count=column.value_distinct_count,
+                value_data_type=column.value_data_type,
+                value_sample_size=column.value_sample_size,
                 created_at=column.created_at
             ) for column in new_columns
         ]
+    
+    async def _analyze_and_store_column_values(self, model_id: UUID, table_name: str, columns: List[ModelTrackedColumn]):
+        """Analyze and store value information for tracked columns"""
+        try:
+            # Get the model to access connection information
+            stmt = select(Model).where(Model.id == model_id)
+            result = await self.db.execute(stmt)
+            model = result.scalar_one_or_none()
+            
+            if not model:
+                logger.error(f"Model not found for value analysis: {model_id}")
+                return
+            
+            # Get connection using the connection service
+            connection = await self.connection_service.get_connection_by_id(self.db, str(model.connection_id))
+            
+            if not connection:
+                logger.error(f"Connection not found for model {model_id}")
+                return
+            
+            # Import training service for value analysis
+            from app.services.training_service import TrainingService
+            training_service = TrainingService()
+            training_service.db = self.db  # Set the database session
+            
+            # Analyze each tracked column
+            for column in columns:
+                if column.is_tracked:
+                    try:
+                        # Get column data type from database schema
+                        columns_info = await self.connection_service.get_table_columns(self.db, str(model.connection_id), table_name)
+                        column_info = next((col for col in columns_info if col['column_name'] == column.column_name), None)
+                        
+                        if column_info:
+                            # Analyze column values
+                            value_analysis = await training_service._analyze_column_values(connection, table_name, column.column_name, column_info['data_type'])
+                            
+                            # Update column with value information
+                            if 'categories' in value_analysis:
+                                column.value_categories = value_analysis['categories']
+                            if 'range' in value_analysis:
+                                column.value_range_min = str(value_analysis['range'].get('min', ''))
+                                column.value_range_max = str(value_analysis['range'].get('max', ''))
+                            if 'date_range' in value_analysis:
+                                column.value_range_min = value_analysis['date_range'].get('start', '')
+                                column.value_range_max = value_analysis['date_range'].get('end', '')
+                            if 'distinct_count' in value_analysis:
+                                column.value_distinct_count = value_analysis['distinct_count']
+                            if 'is_categorical' in value_analysis:
+                                column.value_data_type = 'categorical'
+                            elif 'is_numerical' in value_analysis:
+                                column.value_data_type = 'numerical'
+                            elif 'is_temporal' in value_analysis:
+                                column.value_data_type = 'temporal'
+                            elif 'is_high_cardinality' in value_analysis:
+                                column.value_data_type = 'high_cardinality'
+                                column.value_sample_size = value_analysis.get('sample_size', 20)
+                            
+                            logger.info(f"Analyzed values for {table_name}.{column.column_name}: {value_analysis}")
+                        else:
+                            logger.warning(f"Column info not found for {table_name}.{column.column_name}")
+                            
+                    except Exception as e:
+                        logger.error(f"Failed to analyze values for {table_name}.{column.column_name}: {e}")
+            
+            # Commit all changes
+            await self.db.commit()
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze and store column values: {e}")
+            await self.db.rollback()
+    
+    async def analyze_tracked_column_values(self, model_id: UUID, user_id: UUID, table_id: UUID) -> bool:
+        """Manually trigger value analysis for existing tracked columns"""
+        try:
+            # Verify model ownership
+            stmt = select(Model).where(
+                and_(
+                    Model.id == model_id,
+                    Model.user_id == user_id
+                )
+            )
+            result = await self.db.execute(stmt)
+            model = result.scalar_one_or_none()
+            
+            if not model:
+                raise ValueError("Model not found or access denied")
+            
+            # Verify table ownership
+            stmt = select(ModelTrackedTable).where(
+                and_(
+                    ModelTrackedTable.id == table_id,
+                    ModelTrackedTable.model_id == model_id
+                )
+            )
+            result = await self.db.execute(stmt)
+            tracked_table = result.scalar_one_or_none()
+            
+            if not tracked_table:
+                raise ValueError("Tracked table not found")
+            
+            # Get existing tracked columns
+            stmt = select(ModelTrackedColumn).where(
+                and_(
+                    ModelTrackedColumn.model_tracked_table_id == table_id,
+                    ModelTrackedColumn.is_tracked == True
+                )
+            )
+            result = await self.db.execute(stmt)
+            columns = result.scalars().all()
+            
+            if not columns:
+                logger.info(f"No tracked columns found for table {tracked_table.table_name}")
+                return True
+            
+            # Analyze and store values for existing columns
+            await self._analyze_and_store_column_values(model_id, tracked_table.table_name, columns)
+            
+            logger.info(f"Successfully analyzed values for {len(columns)} columns in table {tracked_table.table_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze tracked column values: {e}")
+            return False
     
     async def get_tracked_columns(self, model_id: UUID, user_id: UUID, table_id: UUID) -> List[ModelTrackedColumnResponse]:
         """Get tracked columns for a specific table"""
@@ -477,6 +615,12 @@ class ModelService:
                 column_name=column.column_name,
                 is_tracked=column.is_tracked,
                 description=column.description,
+                value_categories=column.value_categories,
+                value_range_min=column.value_range_min,
+                value_range_max=column.value_range_max,
+                value_distinct_count=column.value_distinct_count,
+                value_data_type=column.value_data_type,
+                value_sample_size=column.value_sample_size,
                 created_at=column.created_at
             ) for column in columns
         ]

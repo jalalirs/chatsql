@@ -16,6 +16,8 @@ Guidelines:
 - Include filtering, aggregation, and sorting operations
 - Ensure proper table aliases and column qualification
 
+{additional_instructions_placeholder}
+
 IMPORTANT: Return your response as a valid JSON object with this exact structure:
 {{
   "questions": [

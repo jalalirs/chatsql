@@ -21,8 +21,21 @@ export class SSEConnection {
     this.isTerminalEventReceived = false; // Reset on new connection
     this.errorTimeoutId = null;
 
-    console.log('Connecting to SSE stream:', streamUrl);
-    this.eventSource = new EventSource(streamUrl);
+    // Add authentication token to the URL if available
+    let authenticatedUrl = streamUrl;
+    const token = localStorage.getItem('access_token');
+    console.log('🔍 SSE - Token from localStorage:', token ? `${token.substring(0, 20)}...` : 'None');
+    
+    if (token) {
+      const separator = streamUrl.includes('?') ? '&' : '?';
+      authenticatedUrl = `${streamUrl}${separator}token=${encodeURIComponent(token)}`;
+      console.log('🔍 SSE - Authenticated URL:', authenticatedUrl);
+    } else {
+      console.warn('⚠️ SSE - No token found in localStorage');
+    }
+
+    console.log('Connecting to SSE stream:', authenticatedUrl);
+    this.eventSource = new EventSource(authenticatedUrl);
 
     this.eventSource.onopen = () => {
       console.log('SSE connection opened');

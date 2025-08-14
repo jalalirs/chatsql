@@ -18,6 +18,8 @@ Guidelines:
 - Ensure proper table aliases and column qualification
 - Only use the columns specified for each table
 
+{additional_instructions_placeholder}
+
 IMPORTANT: Return your response as a valid JSON object with this exact structure:
 {{
   "questions": [

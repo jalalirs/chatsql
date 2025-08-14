@@ -271,3 +271,20 @@ async def update_tracked_columns(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update tracked columns: {str(e)}")
+
+@router.post("/{model_id}/tracked-tables/{table_id}/analyze-values")
+async def analyze_tracked_column_values(
+    model_id: UUID = Path(..., description="Model ID"),
+    table_id: UUID = Path(..., description="Tracked table ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Manually trigger value analysis for tracked columns"""
+    try:
+        model_service = ModelService(db)
+        success = await model_service.analyze_tracked_column_values(model_id, current_user.id, table_id)
+        return {"success": success, "message": "Value analysis completed"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to analyze column values: {str(e)}")

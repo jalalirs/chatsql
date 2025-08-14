@@ -133,27 +133,60 @@ export const trainingService = {
   },
 
   // AI Generation methods
-  async generateColumnDescriptions(modelId: string, scope: 'column' | 'table' | 'all', tableName?: string, columnName?: string): Promise<{success: boolean, generated_count: number, message: string}> {
+  async generateColumnDescriptions(modelId: string, scope: 'column' | 'table' | 'all', tableName?: string, columnName?: string, additionalInstructions?: string): Promise<{success: boolean, generated_count: number, error_message?: string, generated_descriptions?: any}> {
     const params = new URLSearchParams();
     params.append('scope', scope);
     if (tableName) params.append('table_name', tableName);
     if (columnName) params.append('column_name', columnName);
+    if (additionalInstructions) params.append('additional_instructions', additionalInstructions);
     
     const response = await api.post(`/training/models/${modelId}/generate-column-descriptions?${params.toString()}`);
     return response.data;
   },
 
-  async generateTableDescriptions(modelId: string, tableName?: string): Promise<{success: boolean, generated_count: number, message: string}> {
+  async generateTableDescriptions(modelId: string, tableName?: string, additionalInstructions?: string): Promise<{success: boolean, generated_count: number, error_message?: string, generated_descriptions?: any}> {
     const params = new URLSearchParams();
     if (tableName) params.append('table_name', tableName);
+    if (additionalInstructions) params.append('additional_instructions', additionalInstructions);
     
     const response = await api.post(`/training/models/${modelId}/generate-table-descriptions?${params.toString()}`);
+    console.log('🔍 Frontend service - Raw response:', response);
+    console.log('🔍 Frontend service - Response data:', response.data);
+    console.log('🔍 Frontend service - generated_descriptions in response:', response.data.generated_descriptions);
     return response.data;
   },
 
-  async generateAllDescriptions(modelId: string): Promise<{success: boolean, generated_count: number, message: string}> {
-    const response = await api.post(`/training/models/${modelId}/generate-all-descriptions`);
+  async generateAllDescriptions(modelId: string, additionalInstructions?: string): Promise<{success: boolean, generated_count: number, error_message?: string, generated_descriptions?: any}> {
+    const params = new URLSearchParams();
+    if (additionalInstructions) params.append('additional_instructions', additionalInstructions);
+    
+    const response = await api.post(`/training/models/${modelId}/generate-all-descriptions?${params.toString()}`);
     return response.data;
+  },
+
+  async generateAllDescriptionsSSE(modelId: string, additionalInstructions?: string): Promise<string> {
+    const params = new URLSearchParams();
+    if (additionalInstructions) params.append('additional_instructions', additionalInstructions);
+    
+    // Return the SSE stream URL (GET request)
+    return `${api.defaults.baseURL}/training/models/${modelId}/generate-all-descriptions-sse?${params.toString()}`;
+  },
+
+  // Validate training question
+  async validateQuestion(questionId: string): Promise<{
+    success: boolean;
+    is_validated: boolean;
+    validation_notes: string;
+    execution_result?: any[];
+    message: string;
+  }> {
+    try {
+      const response = await api.post(`/training/questions/${questionId}/validate`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to validate training question:', error);
+      throw error;
+    }
   },
 
   // Enhanced Question Generation with SSE
@@ -230,4 +263,6 @@ export const deleteColumn = trainingService.deleteColumn;
 export const generateColumnDescriptions = trainingService.generateColumnDescriptions;
 export const generateTableDescriptions = trainingService.generateTableDescriptions;
 export const generateAllDescriptions = trainingService.generateAllDescriptions;
+export const generateAllDescriptionsSSE = trainingService.generateAllDescriptionsSSE;
 export const generateEnhancedQuestions = trainingService.generateEnhancedQuestions;
+export const validateQuestion = trainingService.validateQuestion;

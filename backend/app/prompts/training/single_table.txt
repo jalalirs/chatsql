@@ -13,6 +13,18 @@ Guidelines:
 - Each question must use at least one column from the specified table
 - Include a mix of simple SELECT, WHERE conditions, ORDER BY, GROUP BY, and aggregate functions
 - Consider the data types and sample values when generating realistic questions
+- Use natural language in questions, not database terminology (e.g., "players who scored goals" not "players with line_item = 'Goals'")
+- Make questions sound conversational and business-focused
+- Translate database fields to business concepts:
+  * Generic metric fields (like "item_type" + "item_value") = ask about the specific metric and its value
+  * Description fields (like "item_description") = ask about the description of the metric
+  * Focus on what the data represents, not the database structure
+  * When you see generic field names, ask about the actual values they contain, not the field name itself
+  * Use the categorical values provided in the schema to understand what the field represents
+  * Convert raw database values to natural language
+  * Do not use quotes around values in questions - use natural language instead
+
+{additional_instructions_placeholder}
 
 IMPORTANT: Return your response as a valid JSON object with this exact structure:
 {{

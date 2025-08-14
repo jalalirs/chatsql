@@ -1,0 +1,18 @@
+Generate a clear, concise description for the following database column:
+
+Table: {table_name}
+Column: {column_name}
+Data Type: {data_type}
+Nullable: {is_nullable}
+{value_info_placeholder}
+
+Guidelines:
+- Be concise but informative (1-2 sentences max)
+- Explain what the column represents in business terms
+- Mention data type if relevant to understanding
+- Include the value range or sample values in your description when provided
+- Use clear, professional language
+
+{additional_instructions_placeholder}
+
+Generate only the description, no additional text: 

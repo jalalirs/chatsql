@@ -5,7 +5,7 @@ import asyncio
 import pyodbc
 from typing import Optional, List, Dict, Any, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, and_
+from sqlalchemy import select, update, delete, and_, text
 from datetime import datetime
 import logging
 import openai
@@ -187,10 +187,12 @@ class TrainingService:
         model_id: str,
         scope: str,
         table_name: Optional[str] = None,
-        column_name: Optional[str] = None
+        column_name: Optional[str] = None,
+        additional_instructions: Optional[str] = None
     ) -> AIGenerationResult:
         """Generate AI descriptions for columns at different scopes"""
         try:
+            logger.info(f"🔍 generate_column_descriptions called with scope: {scope}, model_id: {model_id}, table_name: {table_name}, column_name: {column_name}")
             # Get model and verify ownership
             model = await self._get_model_and_verify_ownership(db, model_id, user)
             if not model:
@@ -221,12 +223,15 @@ class TrainingService:
                     )
                 
                 description = await self._generate_single_column_description(
-                    db, connection, table_name, column_name
+                    db, connection, table_name, column_name, model_id, additional_instructions
                 )
                 
                 # Update the training column record
                 await self._update_column_description(db, model_id, table_name, column_name, description)
                 generated_count = 1
+                
+                # Return the generated description in the response
+                generated_descriptions = {column_name: description}
                 
             elif scope == "table":
                 # Generate descriptions for all tracked columns in a table
@@ -247,7 +252,7 @@ class TrainingService:
                     )
                 
                 descriptions = await self._generate_tracked_column_descriptions(
-                    db, connection, table_name, tracked_columns
+                    db, connection, table_name, tracked_columns, model_id, additional_instructions
                 )
                 
                 # Update all column descriptions for the table
@@ -255,27 +260,47 @@ class TrainingService:
                     await self._update_column_description(db, model_id, table_name, col_name, description)
                     generated_count += 1
                 
+                # Return the generated descriptions in the response
+                generated_descriptions = {table_name: descriptions}
+                
             elif scope == "all":
                 # Generate descriptions for all tracked columns across all tables
+                logger.info(f"🔍 Processing 'all' scope for model {model_id}")
                 tracked_tables = await self._get_model_tracked_tables(db, model_id)
+                logger.info(f"🔍 Found {len(tracked_tables)} tracked tables: {[t.table_name for t in tracked_tables]}")
+                
+                all_generated_descriptions = {}
                 
                 for table_info in tracked_tables:
+                    logger.info(f"🔍 Processing table: {table_info.table_name}")
                     # Get tracked columns for this table
                     tracked_columns = await self._get_model_tracked_columns_for_table(db, model_id, table_info.table_name)
+                    logger.info(f"🔍 Found {len(tracked_columns)} tracked columns for table {table_info.table_name}")
                     if tracked_columns:
+                        logger.info(f"🔍 Generating descriptions for {len(tracked_columns)} columns in table {table_info.table_name}")
                         descriptions = await self._generate_tracked_column_descriptions(
-                            db, connection, table_info.table_name, tracked_columns
+                            db, connection, table_info.table_name, tracked_columns, model_id, additional_instructions
                         )
+                        logger.info(f"🔍 Generated {len(descriptions)} descriptions for table {table_info.table_name}")
                         
                         # Update all column descriptions for each table
                         for col_name, description in descriptions.items():
                             await self._update_column_description(db, model_id, table_info.table_name, col_name, description)
                             generated_count += 1
+                        
+                        # Collect descriptions for response
+                        all_generated_descriptions[table_info.table_name] = descriptions
+                    else:
+                        logger.warning(f"⚠️ No tracked columns found for table {table_info.table_name}")
+                
+                generated_descriptions = all_generated_descriptions
             
+            logger.info(f"🔍 generate_column_descriptions completed. Generated {generated_count} descriptions")
             return AIGenerationResult(
                 success=True,
                 generated_count=generated_count,
-                error_message=None
+                error_message=None,
+                generated_descriptions=generated_descriptions
             )
             
         except Exception as e:
@@ -291,7 +316,8 @@ class TrainingService:
         db: AsyncSession,
         user: User,
         model_id: str,
-        table_name: Optional[str] = None
+        table_name: Optional[str] = None,
+        additional_instructions: Optional[str] = None
     ) -> AIGenerationResult:
         """Generate AI descriptions for all columns in a table or all tables"""
         try:
@@ -325,35 +351,48 @@ class TrainingService:
                         error_message=f"No tracked columns found for table {table_name}"
                     )
                 
+                logger.info(f"🔍 generate_table_descriptions: Calling _generate_tracked_column_descriptions for table {table_name}")
                 descriptions = await self._generate_tracked_column_descriptions(
-                    db, connection, table_name, tracked_columns
+                    db, connection, table_name, tracked_columns, model_id, additional_instructions
                 )
+                logger.info(f"🔍 generate_table_descriptions: Received descriptions: {descriptions}")
                 
                 # Update all column descriptions for the table
                 for col_name, description in descriptions.items():
                     await self._update_column_description(db, model_id, table_name, col_name, description)
                     generated_count += 1
+                
+                # Return the generated descriptions in the response
+                generated_descriptions = {table_name: descriptions}
+                logger.info(f"🔍 generate_table_descriptions: Final generated_descriptions: {generated_descriptions}")
             else:
                 # Generate descriptions for all tracked tables
                 tracked_tables = await self._get_model_tracked_tables(db, model_id)
+                all_generated_descriptions = {}
                 
                 for table_info in tracked_tables:
                     # Get tracked columns for this table
                     tracked_columns = await self._get_model_tracked_columns_for_table(db, model_id, table_info.table_name)
                     if tracked_columns:
                         descriptions = await self._generate_tracked_column_descriptions(
-                            db, connection, table_info.table_name, tracked_columns
+                            db, connection, table_info.table_name, tracked_columns, model_id, additional_instructions
                         )
                         
                         # Update all column descriptions for each table
                         for col_name, description in descriptions.items():
                             await self._update_column_description(db, model_id, table_info.table_name, col_name, description)
                             generated_count += 1
+                        
+                        # Collect descriptions for response
+                        all_generated_descriptions[table_info.table_name] = descriptions
+                
+                generated_descriptions = all_generated_descriptions
             
             return AIGenerationResult(
                 success=True,
                 generated_count=generated_count,
-                error_message=None
+                error_message=None,
+                generated_descriptions=generated_descriptions
             )
             
         except Exception as e:
@@ -368,14 +407,16 @@ class TrainingService:
         self,
         db: AsyncSession,
         user: User,
-        model_id: str
+        model_id: str,
+        additional_instructions: Optional[str] = None
     ) -> AIGenerationResult:
         """Generate AI descriptions for all tracked columns across all tables"""
         return await self.generate_column_descriptions(
             db=db,
             user=user,
             model_id=model_id,
-            scope="all"
+            scope="all",
+            additional_instructions=additional_instructions
         )
     
     async def _generate_single_column_description(
@@ -383,10 +424,13 @@ class TrainingService:
         db: AsyncSession,
         connection: Connection,
         table_name: str,
-        column_name: str
+        column_name: str,
+        model_id: str,
+        additional_instructions: Optional[str] = None
     ) -> str:
         """Generate AI description for a single column"""
         try:
+            logger.info(f"🔍 _generate_single_column_description called for table {table_name}, column {column_name}, model {model_id}")
             client = self._get_openai_client()
             
             # Get column information from database schema
@@ -403,10 +447,20 @@ class TrainingService:
                     break
             
             if not column_info:
+                logger.warning(f"⚠️ Column {column_name} not found in table {table_name}")
                 return f"Description for {column_name} column"
             
-            # Build prompt for column description
-            prompt = self._build_column_description_prompt(table_name, column_info)
+            logger.info(f"🔍 Found column info: {column_info}")
+            
+            # First, analyze and store column value information
+            value_analysis = await self._analyze_column_values(connection, table_name, column_info['column_name'], column_info['data_type'])
+            await self._update_column_value_information(db, model_id, table_name, column_info['column_name'], value_analysis)
+            
+            # Build prompt for column description using stored value information
+            enhanced_column_info = {**column_info, **value_analysis}
+            prompt = await self._build_column_description_prompt(connection, table_name, enhanced_column_info, additional_instructions)
+            
+            logger.info(f"🔍 AI Prompt for single column {column_name}: {prompt}")
             
             response = client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
@@ -417,6 +471,8 @@ class TrainingService:
                 temperature=0.3,
                 max_tokens=200
             )
+            
+            logger.info(f"🔍 AI Response for single column {column_name}: {response.choices[0].message.content}")
             
             description = response.choices[0].message.content.strip()
             return description if description else f"Description for {column_name} column"
@@ -465,6 +521,7 @@ class TrainingService:
     async def _get_model_tracked_columns_for_table(self, db: AsyncSession, model_id: str, table_name: str) -> List[Dict[str, Any]]:
         """Get tracked columns for a specific table in a model"""
         try:
+            logger.info(f"🔍 _get_model_tracked_columns_for_table called for model {model_id}, table {table_name}")
             # First find the tracked table for this model and table name
             stmt = select(ModelTrackedTable).where(
                 ModelTrackedTable.model_id == model_id,
@@ -477,6 +534,8 @@ class TrainingService:
                 logger.error(f"Tracked table not found for model {model_id}, table {table_name}")
                 return []
             
+            logger.info(f"🔍 Found tracked table: {tracked_table.id} for table {table_name}")
+            
             # Now get the tracked columns for this table (only where is_tracked is true)
             stmt = select(ModelTrackedColumn).where(
                 and_(
@@ -487,6 +546,8 @@ class TrainingService:
             result = await db.execute(stmt)
             tracked_columns = result.scalars().all()
             
+            logger.info(f"🔍 Found {len(tracked_columns)} tracked columns for table {table_name}")
+            
             # Convert to dictionary format for consistency
             columns = []
             for col in tracked_columns:
@@ -494,7 +555,14 @@ class TrainingService:
                     'column_name': col.column_name,
                     'data_type': 'Unknown',  # ModelTrackedColumn doesn't have data_type
                     'is_nullable': True,     # ModelTrackedColumn doesn't have is_nullable
-                    'description': col.description or ''
+                    'description': col.description or '',
+                    # Value information fields
+                    'value_categories': col.value_categories,
+                    'value_range_min': col.value_range_min,
+                    'value_range_max': col.value_range_max,
+                    'value_distinct_count': col.value_distinct_count,
+                    'value_data_type': col.value_data_type,
+                    'value_sample_size': col.value_sample_size
                 })
             
             return columns
@@ -508,7 +576,9 @@ class TrainingService:
         db: AsyncSession,
         connection: Connection,
         table_name: str,
-        tracked_columns: List[Dict[str, Any]]
+        tracked_columns: List[Dict[str, Any]],
+        model_id: str,
+        additional_instructions: Optional[str] = None
     ) -> Dict[str, str]:
         """Generate AI descriptions for tracked columns in a table"""
         try:
@@ -517,8 +587,17 @@ class TrainingService:
             if not tracked_columns:
                 return {}
             
-            # Build prompt for tracked column descriptions
-            prompt = self._build_table_column_descriptions_prompt(table_name, tracked_columns)
+            # First, analyze and store column value information for all columns
+            enhanced_columns = []
+            for col in tracked_columns:
+                value_analysis = await self._analyze_column_values(connection, table_name, col['column_name'], col['data_type'])
+                await self._update_column_value_information(db, model_id, table_name, col['column_name'], value_analysis)
+                enhanced_columns.append({**col, **value_analysis})
+            
+            # Build prompt for tracked column descriptions using stored value information
+            prompt = await self._build_table_column_descriptions_prompt(connection, table_name, enhanced_columns, additional_instructions)
+            
+            logger.info(f"🔍 AI Prompt for table {table_name}: {prompt}")
             
             response = client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
@@ -530,8 +609,11 @@ class TrainingService:
                 max_tokens=1000
             )
             
+            logger.info(f"🔍 AI Response for table {table_name}: {response.choices[0].message.content}")
+            
             # Parse the response to get descriptions for each column
             descriptions = self._parse_column_descriptions_response(response.choices[0].message.content, tracked_columns)
+            logger.info(f"🔍 Parsed descriptions for table {table_name}: {descriptions}")
             return descriptions
             
         except Exception as e:
@@ -579,46 +661,197 @@ class TrainingService:
             logger.error(f"Failed to generate table column descriptions: {e}")
             return {}
     
-    def _build_column_description_prompt(self, table_name: str, column_info: Dict[str, Any]) -> str:
+    async def _build_column_description_prompt(self, connection: Connection, table_name: str, column_info: Dict[str, Any], additional_instructions: str = None) -> str:
         """Build prompt for single column description generation"""
-        return f"""Generate a clear, concise description for the following database column:
-
-Table: {table_name}
-Column: {column_info['column_name']}
-Data Type: {column_info['data_type']}
-Nullable: {column_info.get('is_nullable', 'Unknown')}
-
-Guidelines:
-- Be concise but informative (1-2 sentences max)
-- Explain what the column represents in business terms
-- Mention data type if relevant to understanding
-- Use clear, professional language
-
-Generate only the description, no additional text:"""
-    
-    def _build_table_column_descriptions_prompt(self, table_name: str, columns: List[Dict[str, Any]]) -> str:
-        """Build prompt for table column descriptions generation"""
-        columns_text = "\n".join([
-            f"- {col['column_name']} ({col['data_type']}) - Nullable: {col.get('is_nullable', 'Unknown')}"
-            for col in columns
-        ])
+        template_path = "app/prompts/training/column_description.txt"
+        try:
+            with open(template_path, 'r') as f:
+                template = f.read()
+        except FileNotFoundError:
+            logger.error(f"Prompt template not found: {template_path}")
+            raise FileNotFoundError(f"Prompt template not found: {template_path}")
         
-        return f"""Generate clear, concise descriptions for all columns in the table: {table_name}
-
-Table columns:
-{columns_text}
-
-Guidelines:
-- Be concise but informative (1-2 sentences max per column)
-- Explain what each column represents in business terms
-- Mention data type if relevant to understanding
-- Use clear, professional language
-
-Format your response as:
-Column: [column_name]
-Description: [description]
-
-Generate descriptions for all columns:"""
+        additional_instructions_placeholder = f"\nAdditional Instructions:\n{additional_instructions}" if additional_instructions else ""
+        
+        # Get value information from stored data
+        value_info = self._get_column_value_info(column_info)
+        
+        # Debug logging
+        logger.info(f"Column: {column_info['column_name']}, Value Info: {value_info}")
+        
+        value_info_placeholder = f"\nValue Information:\n{value_info}" if value_info else ""
+        
+        final_prompt = template.format(
+            table_name=table_name,
+            column_name=column_info['column_name'],
+            data_type=column_info['data_type'],
+            is_nullable=column_info.get('is_nullable', 'Unknown'),
+            value_info_placeholder=value_info_placeholder,
+            additional_instructions_placeholder=additional_instructions_placeholder
+        )
+        
+        # Debug logging
+        logger.info(f"Final prompt for {column_info['column_name']}:\n{final_prompt}")
+        
+        return final_prompt
+    
+    async def _build_table_column_descriptions_prompt(self, connection: Connection, table_name: str, columns: List[Dict[str, Any]], additional_instructions: str = None) -> str:
+        """Build prompt for table column descriptions generation"""
+        template_path = "app/prompts/training/table_column_descriptions.txt"
+        try:
+            with open(template_path, 'r') as f:
+                template = f.read()
+        except FileNotFoundError:
+            logger.error(f"Prompt template not found: {template_path}")
+            raise FileNotFoundError(f"Prompt template not found: {template_path}")
+        
+        # Build columns text with value information
+        columns_with_values = []
+        for col in columns:
+            # Get value information from stored data
+            value_info = self._get_column_value_info(col)
+            value_text = f" - Values: {value_info}" if value_info else ""
+            columns_with_values.append(
+                f"- {col['column_name']} ({col['data_type']}) - Nullable: {col.get('is_nullable', 'Unknown')}{value_text}"
+            )
+        
+        columns_text = "\n".join(columns_with_values)
+        
+        additional_instructions_placeholder = f"\nAdditional Instructions:\n{additional_instructions}" if additional_instructions else ""
+        
+        return template.format(
+            table_name=table_name,
+            columns_text=columns_text,
+            additional_instructions_placeholder=additional_instructions_placeholder
+        )
+    
+    async def _analyze_column_values(self, connection: Connection, table_name: str, column_name: str, data_type: str) -> Dict[str, Any]:
+        """Analyze column values to determine categories, ranges, etc."""
+        try:
+            logger.info(f"Analyzing column values for {table_name}.{column_name} (type: {data_type})")
+            
+            # Skip analysis for certain data types to avoid performance issues
+            if data_type.lower() in ['text', 'ntext', 'image', 'varbinary', 'binary']:
+                logger.info(f"Skipping analysis for data type: {data_type}")
+                return {}
+            
+            # Build connection string and connect to database
+            conn_str = self._build_odbc_connection_string(connection)
+            cnxn = await asyncio.to_thread(pyodbc.connect, conn_str, timeout=30)
+            cursor = cnxn.cursor()
+            
+            try:
+                # Get distinct values count
+                await asyncio.to_thread(cursor.execute, f"SELECT COUNT(DISTINCT [{column_name}]) FROM {table_name} WHERE [{column_name}] IS NOT NULL")
+                distinct_count = await asyncio.to_thread(cursor.fetchone)
+                distinct_count = distinct_count[0] if distinct_count else 0
+                
+                # For categorical data (low distinct count or string types)
+                if distinct_count <= 50 or data_type.lower() in ['varchar', 'nvarchar', 'char', 'nchar']:
+                    # Get all distinct values (up to 20 for display)
+                    await asyncio.to_thread(cursor.execute, f"SELECT DISTINCT TOP 20 [{column_name}] FROM {table_name} WHERE [{column_name}] IS NOT NULL ORDER BY [{column_name}]")
+                    distinct_values = await asyncio.to_thread(cursor.fetchall)
+                    categories = [str(row[0]) for row in distinct_values if row[0] is not None]
+                    
+                    return {
+                        'categories': categories,
+                        'distinct_count': distinct_count,
+                        'is_categorical': True
+                    }
+                
+                # For numerical data
+                elif data_type.lower() in ['int', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'real', 'money', 'smallmoney']:
+                    # Get min and max values
+                    await asyncio.to_thread(cursor.execute, f"SELECT MIN([{column_name}]), MAX([{column_name}]) FROM {table_name} WHERE [{column_name}] IS NOT NULL")
+                    min_max = await asyncio.to_thread(cursor.fetchone)
+                    
+                    if min_max and min_max[0] is not None and min_max[1] is not None:
+                        return {
+                            'range': {
+                                'min': min_max[0],
+                                'max': min_max[1]
+                            },
+                            'distinct_count': distinct_count,
+                            'is_numerical': True
+                        }
+                
+                # For date/time data
+                elif data_type.lower() in ['date', 'datetime', 'datetime2', 'smalldatetime', 'time']:
+                    # Get min and max dates
+                    await asyncio.to_thread(cursor.execute, f"SELECT MIN([{column_name}]), MAX([{column_name}]) FROM {table_name} WHERE [{column_name}] IS NOT NULL")
+                    min_max = await asyncio.to_thread(cursor.fetchone)
+                    
+                    if min_max and min_max[0] is not None and min_max[1] is not None:
+                        return {
+                            'date_range': {
+                                'start': str(min_max[0]),
+                                'end': str(min_max[1])
+                            },
+                            'distinct_count': distinct_count,
+                            'is_temporal': True
+                        }
+                
+                # For high-cardinality string columns, get a sample
+                elif distinct_count > 50:
+                    await asyncio.to_thread(cursor.execute, f"SELECT TOP 20 [{column_name}] FROM {table_name} WHERE [{column_name}] IS NOT NULL ORDER BY NEWID()")
+                    sample_values = await asyncio.to_thread(cursor.fetchall)
+                    categories = [str(row[0]) for row in sample_values if row[0] is not None]
+                    
+                    return {
+                        'categories': categories,
+                        'distinct_count': distinct_count,
+                        'is_high_cardinality': True,
+                        'sample_size': 20
+                    }
+                
+                return {
+                    'distinct_count': distinct_count
+                }
+                
+            finally:
+                cnxn.close()
+                
+        except Exception as e:
+            logger.warning(f"Failed to analyze column values for {table_name}.{column_name}: {e}")
+            return {}
+    
+    def _get_column_value_info(self, column_info: Dict[str, Any]) -> str:
+        """Get value information for a column from stored data"""
+        try:
+            # Check if we have stored value categories
+            if column_info.get('value_categories'):
+                categories = column_info['value_categories']
+                distinct_count = column_info.get('value_distinct_count', len(categories))
+                data_type = column_info.get('value_data_type', 'categorical')
+                
+                if data_type == 'high_cardinality':
+                    sample_size = column_info.get('value_sample_size', 20)
+                    return f"Categories (sample of {sample_size} from {distinct_count} distinct): {', '.join(map(str, categories))} ... and {distinct_count - sample_size} more"
+                else:
+                    return f"Categories ({distinct_count} distinct): {', '.join(map(str, categories))}"
+            
+            # Check if we have stored range information (numerical data)
+            if column_info.get('value_range_min') or column_info.get('value_range_max'):
+                min_val = column_info.get('value_range_min')
+                max_val = column_info.get('value_range_max')
+                distinct_count = column_info.get('value_distinct_count', 0)
+                
+                if min_val and max_val:
+                    return f"Range: {min_val} to {max_val} ({distinct_count} distinct values)"
+                elif min_val:
+                    return f"Min: {min_val} ({distinct_count} distinct values)"
+                elif max_val:
+                    return f"Max: {max_val} ({distinct_count} distinct values)"
+            
+            # Check if we have distinct count but no other info
+            if column_info.get('value_distinct_count') and column_info['value_distinct_count'] > 0:
+                return f"Distinct values: {column_info['value_distinct_count']}"
+            
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Failed to get column value info: {e}")
+            return ""
     
     def _parse_column_descriptions_response(self, response: str, columns: List[Dict[str, Any]]) -> Dict[str, str]:
         """Parse AI response to extract column descriptions"""
@@ -693,6 +926,67 @@ Generate descriptions for all columns:"""
             
         except Exception as e:
             logger.error(f"Failed to update column description: {e}")
+            await db.rollback()
+    
+    async def _update_column_value_information(
+        self,
+        db: AsyncSession,
+        model_id: str,
+        table_name: str,
+        column_name: str,
+        value_analysis: Dict[str, Any]
+    ):
+        """Update column value information in the database"""
+        try:
+            # Find the tracked table for this model and table name
+            stmt = select(ModelTrackedTable).where(
+                ModelTrackedTable.model_id == model_id,
+                ModelTrackedTable.table_name == table_name
+            )
+            result = await db.execute(stmt)
+            tracked_table = result.scalar_one_or_none()
+            
+            if not tracked_table:
+                logger.error(f"Tracked table not found for model {model_id}, table {table_name}")
+                return
+            
+            # Find the tracked column
+            stmt = select(ModelTrackedColumn).where(
+                ModelTrackedColumn.model_tracked_table_id == tracked_table.id,
+                ModelTrackedColumn.column_name == column_name
+            )
+            result = await db.execute(stmt)
+            tracked_column = result.scalar_one_or_none()
+            
+            if tracked_column:
+                # Update value information fields
+                if 'categories' in value_analysis:
+                    tracked_column.value_categories = value_analysis['categories']
+                if 'range' in value_analysis:
+                    tracked_column.value_range_min = str(value_analysis['range'].get('min', ''))
+                    tracked_column.value_range_max = str(value_analysis['range'].get('max', ''))
+                if 'date_range' in value_analysis:
+                    tracked_column.value_range_min = value_analysis['date_range'].get('start', '')
+                    tracked_column.value_range_max = value_analysis['date_range'].get('end', '')
+                if 'distinct_count' in value_analysis:
+                    tracked_column.value_distinct_count = value_analysis['distinct_count']
+                if 'is_categorical' in value_analysis:
+                    tracked_column.value_data_type = 'categorical'
+                elif 'is_numerical' in value_analysis:
+                    tracked_column.value_data_type = 'numerical'
+                elif 'is_temporal' in value_analysis:
+                    tracked_column.value_data_type = 'temporal'
+                elif 'is_high_cardinality' in value_analysis:
+                    tracked_column.value_data_type = 'high_cardinality'
+                    tracked_column.value_sample_size = value_analysis.get('sample_size', 20)
+                
+                await db.commit()
+                logger.info(f"Updated value information for {table_name}.{column_name}")
+            else:
+                logger.warning(f"Tracked column not found: {table_name}.{column_name}")
+                
+        except Exception as e:
+            logger.error(f"Failed to update column value information: {e}")
             await db.rollback()
     
     async def _get_model_and_verify_ownership(self, db: AsyncSession, model_id: str, user: User) -> Optional[Model]:
@@ -1273,6 +1567,136 @@ Generate exactly {num_examples} examples:"""
             logger.error(f"Failed to delete training question: {e}")
             return False
 
+    async def validate_training_question(
+        self,
+        db: AsyncSession,
+        user: User,
+        question_id: str
+    ) -> Dict[str, Any]:
+        """Validate a training question by executing the SQL query"""
+        try:
+            # Get the question
+            stmt = select(ModelTrainingQuestion).where(ModelTrainingQuestion.id == question_id)
+            result = await db.execute(stmt)
+            question = result.scalar_one_or_none()
+            
+            if not question:
+                return {
+                    "success": False,
+                    "error_message": "Question not found"
+                }
+            
+            # Get the model to access connection information
+            stmt = select(Model).where(Model.id == question.model_id)
+            result = await db.execute(stmt)
+            model = result.scalar_one_or_none()
+            
+            if not model:
+                return {
+                    "success": False,
+                    "error_message": "Model not found"
+                }
+            
+            # Verify user owns the model
+            if model.user_id != user.id:
+                return {
+                    "success": False,
+                    "error_message": "Access denied"
+                }
+            
+            # Get connection information
+            from app.services.connection_service import ConnectionService
+            connection_service = ConnectionService()
+            connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
+            
+            if not connection:
+                return {
+                    "success": False,
+                    "error_message": "Database connection not found"
+                }
+            
+            # Execute the SQL query
+            try:
+                execution_result = await self._execute_sql_query(connection, question.sql)
+                
+                # Update question as validated
+                question.is_validated = True
+                question.validation_notes = f"Query executed successfully. Returned {len(execution_result)} rows."
+                await db.commit()
+                
+                return {
+                    "success": True,
+                    "is_validated": True,
+                    "validation_notes": question.validation_notes,
+                    "execution_result": execution_result,
+                    "message": "Query executed successfully"
+                }
+                
+            except Exception as query_error:
+                # Update question as invalid
+                question.is_validated = False
+                question.validation_notes = f"Query execution failed: {str(query_error)}"
+                await db.commit()
+                
+                return {
+                    "success": True,
+                    "is_validated": False,
+                    "validation_notes": question.validation_notes,
+                    "message": "Query execution failed"
+                }
+            
+        except Exception as e:
+            logger.error(f"Failed to validate training question: {e}")
+            await db.rollback()
+            return {
+                "success": False,
+                "error_message": f"Validation failed: {str(e)}"
+            }
+
+    async def _execute_sql_query(self, connection: Any, sql: str) -> List[Dict[str, Any]]:
+        """Execute a SQL query and return results"""
+        try:
+            # Build connection string directly from connection object
+            conn_str = f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+            conn_str += f"SERVER={connection.server};"
+            conn_str += f"DATABASE={connection.database_name};"
+            conn_str += f"UID={connection.username};"
+            conn_str += f"PWD={connection.password};"
+            
+            # Add encryption settings
+            if connection.encrypt:
+                conn_str += "Encrypt=yes;"
+            else:
+                conn_str += "Encrypt=no;"
+            
+            if connection.trust_server_certificate:
+                conn_str += "TrustServerCertificate=yes;"
+            
+            # Connect and execute query
+            cnxn = await asyncio.to_thread(pyodbc.connect, conn_str, timeout=30)
+            cursor = cnxn.cursor()
+            
+            try:
+                # Execute the query
+                cursor.execute(sql)
+                rows = cursor.fetchall()
+                
+                # Get column names
+                columns = [column[0] for column in cursor.description] if cursor.description else []
+                
+                # Convert to list of dictionaries
+                if rows and columns:
+                    return [dict(zip(columns, row)) for row in rows]
+                else:
+                    return []
+            finally:
+                cursor.close()
+                cnxn.close()
+                    
+        except Exception as e:
+            logger.error(f"SQL execution error: {e}")
+            raise e
+
     async def get_model_training_columns(self, db: AsyncSession, model_id: str) -> List[ModelTrainingColumnResponse]:
         """Get training columns for a model"""
         try:
@@ -1670,7 +2094,8 @@ Generate exactly {num_examples} examples:"""
             await sse_logger.progress(20, f"Scope prepared: {scope['type']}")
             
             # Load and process prompt template
-            prompt = self._load_and_process_prompt(scope['type'], scope)
+            additional_instructions = scope_config.get('additional_instructions', '')
+            prompt = self._load_and_process_prompt(scope['type'], scope, additional_instructions)
             
             await sse_logger.progress(30, "Generating questions with LLM...")
             
@@ -1800,17 +2225,59 @@ Generate exactly {num_examples} examples:"""
                 schema_lines.append(f"Schema: {table.schema_name}")
             
             for col in selected_columns:
+                # Build value information string
+                value_info = self._get_column_value_info_for_schema(col)
+                
                 schema_lines.append(
                     f"- {col.column_name}"
                     f" - Description: {col.description or 'No description'}"
+                    f"{value_info}"
                 )
         
         return "\n".join(schema_lines)
+    
+    def _get_column_value_info_for_schema(self, column) -> str:
+        """Get value information for schema display"""
+        value_info_parts = []
+        
+        if column.value_categories and len(column.value_categories) > 0:
+            distinct_count = column.value_distinct_count or len(column.value_categories)
+            data_type = column.value_data_type or 'categorical'
+            
+            if data_type == 'high_cardinality':
+                sample_size = column.value_sample_size or 20
+                display_categories = column.value_categories[:3]
+                remaining = distinct_count - sample_size
+                value_info_parts.append(f" - Categories (sample): {', '.join(display_categories)} ... and {remaining} more ({distinct_count} total)")
+            else:
+                display_categories = column.value_categories[:4]
+                remaining = distinct_count - len(display_categories)
+                if remaining > 0:
+                    value_info_parts.append(f" - Categories: {', '.join(display_categories)} +{remaining} more ({distinct_count} total)")
+                else:
+                    value_info_parts.append(f" - Categories: {', '.join(display_categories)} ({distinct_count} total)")
+        
+        if column.value_range_min or column.value_range_max:
+            distinct_count = column.value_distinct_count or 0
+            if column.value_range_min and column.value_range_max:
+                value_info_parts.append(f" - Range: {column.value_range_min} to {column.value_range_max} ({distinct_count} distinct)")
+            elif column.value_range_min:
+                value_info_parts.append(f" - Min: {column.value_range_min} ({distinct_count} distinct)")
+            elif column.value_range_max:
+                value_info_parts.append(f" - Max: {column.value_range_max} ({distinct_count} distinct)")
+        
+        if column.value_distinct_count and column.value_distinct_count > 0 and not value_info_parts:
+            value_info_parts.append(f" - Distinct values: {column.value_distinct_count}")
+        
+        if value_info_parts:
+            return "".join(value_info_parts)
+        return ""
 
     def _load_and_process_prompt(
         self,
         template_name: str,
-        scope_config: Dict[str, Any]
+        scope_config: Dict[str, Any],
+        additional_instructions: str = ''
     ) -> str:
         """Load prompt template and replace placeholders"""
         
@@ -1828,13 +2295,25 @@ Generate exactly {num_examples} examples:"""
         columns_list = self._format_columns_list(scope_config['columns'])
         
         # Replace placeholders
+        additional_instructions_placeholder = f"\nAdditional Instructions:\n{additional_instructions}" if additional_instructions else ""
+        
         prompt = template.format(
             num_questions=scope_config['num_questions'],
             table_name=scope_config['tables'][0] if len(scope_config['tables']) == 1 else "multiple tables",
             table_names=", ".join(scope_config['tables']),
             table_schema=scope_config['schema_info'],
-            columns_list=columns_list
+            columns_list=columns_list,
+            additional_instructions_placeholder=additional_instructions_placeholder
         )
+        
+        # Debug: Log the final prompt
+        logger.info(f"=== FINAL PROMPT SENT TO AI ===")
+        logger.info(f"Additional Instructions: '{additional_instructions}'")
+        logger.info(f"Additional Instructions Placeholder: '{additional_instructions_placeholder}'")
+        logger.info(f"Full Prompt Length: {len(prompt)} characters")
+        logger.info(f"Prompt Preview (first 500 chars): {prompt[:500]}...")
+        logger.info(f"Prompt Preview (last 500 chars): {prompt[-500:]}...")
+        logger.info(f"=== END PROMPT DEBUG ===")
         
         return prompt
 

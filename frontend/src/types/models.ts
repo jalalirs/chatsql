@@ -32,6 +32,13 @@ export interface ModelTrackedColumn {
   column_name: string;
   is_tracked: boolean;
   description?: string;
+  // Value information fields
+  value_categories?: string[];
+  value_range_min?: string;
+  value_range_max?: string;
+  value_distinct_count?: number;
+  value_data_type?: string;
+  value_sample_size?: number;
   created_at: string;
 }
 
@@ -196,6 +203,7 @@ export interface QuestionGenerationRequest {
   tables: string[];
   columns: { [table: string]: string[] };
   num_questions: number;
+  additional_instructions?: string;
 }
 
 export interface QuestionGenerationProgress {

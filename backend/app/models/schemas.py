@@ -540,6 +540,13 @@ class ModelTrackedColumnBase(BaseModel):
     column_name: str = Field(..., min_length=1, max_length=255)
     is_tracked: bool = True
     description: Optional[str] = None
+    # Value information fields
+    value_categories: Optional[List[str]] = None
+    value_range_min: Optional[str] = None
+    value_range_max: Optional[str] = None
+    value_distinct_count: Optional[int] = None
+    value_data_type: Optional[str] = None
+    value_sample_size: Optional[int] = None
 
 class ModelTrackedColumnCreate(ModelTrackedColumnBase):
     pass
@@ -548,6 +555,13 @@ class ModelTrackedColumnUpdate(BaseModel):
     column_name: Optional[str] = Field(None, min_length=1, max_length=255)
     is_tracked: Optional[bool] = None
     description: Optional[str] = None
+    # Value information fields
+    value_categories: Optional[List[str]] = None
+    value_range_min: Optional[str] = None
+    value_range_max: Optional[str] = None
+    value_distinct_count: Optional[int] = None
+    value_data_type: Optional[str] = None
+    value_sample_size: Optional[int] = None
 
 class ModelTrackedColumnResponse(ModelTrackedColumnBase):
     id: uuid.UUID
@@ -712,6 +726,7 @@ class AIGenerationResult(BaseModel):
     success: bool
     generated_count: int
     error_message: Optional[str] = None
+    generated_descriptions: Optional[Dict[str, Any]] = None
 
 class ColumnDescriptionGenerationRequest(BaseModel):
     scope: str = Field(..., description="Scope: 'column', 'table', or 'all'")
@@ -727,6 +742,7 @@ class QuestionGenerationRequest(BaseModel):
     tables: List[str] = Field(..., description="List of table names to use")
     columns: Dict[str, List[str]] = Field(default={}, description="Dictionary mapping table names to lists of column names")
     num_questions: int = Field(default=20, ge=1, le=100, description="Number of questions to generate")
+    additional_instructions: Optional[str] = Field(default=None, description="Additional instructions for AI question generation")
 
 class QuestionGenerationResponse(BaseModel):
     success: bool

@@ -116,7 +116,15 @@ class ConnectionService:
                 if sse_logger:
                     await sse_logger.progress(90, f"Getting sample data from {table_name}...")
                 
-                sample_data, column_info = await self._get_table_sample_data(cursor, table_name)
+                sample_data, column_info_list = await self._get_table_sample_data(cursor, table_name)
+                
+                # Convert column_info list to dictionary format expected by ConnectionTestResult
+                column_info = {}
+                for col in column_info_list:
+                    column_info[col['name']] = {
+                        'type': col['type'],
+                        'nullable': col['nullable']
+                    }
             
             if sse_logger:
                 await sse_logger.progress(100, "Connection test completed successfully")
@@ -251,6 +259,8 @@ class ConnectionService:
         except Exception as e:
             logger.warning(f"Failed to get sample values for {table_name}.{column_name}: {e}")
             return []
+    
+
     
     async def _get_table_sample_data(self, cursor, table_name: str) -> tuple[List[Dict], List[Dict]]:
         """Get sample data and column info for a table"""
