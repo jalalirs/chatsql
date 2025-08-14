@@ -1,0 +1,19 @@
+# Development stage
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies (including dev dependencies for hot reloading)
+RUN npm install
+
+# Copy source code
+COPY . .
+
+# Expose port for development
+EXPOSE 3000
+
+# Start development server with hot reloading
+CMD ["npm", "start"]
