@@ -1,3 +1,4 @@
+// Model Types
 export interface Model {
   id: string;
   name: string;
@@ -72,6 +73,9 @@ export interface ModelTrainingQuestion {
   model_id: string;
   question: string;
   sql: string;
+  involved_columns?: Array<{ table: string; column: string }>;
+  query_type?: string;
+  difficulty?: string;
   generated_by: string;
   generation_model?: string;
   is_validated: boolean;
@@ -122,6 +126,9 @@ export interface DocumentationUpdateRequest {
 export interface QuestionCreateRequest {
   question: string;
   sql: string;
+  involved_columns?: Array<{ table: string; column: string }>;
+  query_type?: string;
+  difficulty?: string;
   generated_by?: string;
   generation_model?: string;
   is_validated?: boolean;
@@ -131,6 +138,9 @@ export interface QuestionCreateRequest {
 export interface QuestionUpdateRequest {
   question?: string;
   sql?: string;
+  involved_columns?: Array<{ table: string; column: string }>;
+  query_type?: string;
+  difficulty?: string;
   generated_by?: string;
   generation_model?: string;
   is_validated?: boolean;
@@ -167,14 +177,51 @@ export interface TrainingTaskResponse {
 export interface TaskStatus {
   task_id: string;
   model_id: string;
-  user_id: string;
-  task_type: string;
   status: string;
   progress: number;
+  message: string;
+  error?: string;
+}
+
+// Enhanced Training Generation Types
+export interface GenerationScope {
+  type: 'single_table' | 'specific_columns' | 'multiple_tables' | 'multiple_tables_columns';
+  tables: string[];
+  columns: { [table: string]: string[] };
+  numQuestions: number;
+}
+
+export interface QuestionGenerationRequest {
+  type: 'single_table' | 'specific_columns' | 'multiple_tables' | 'multiple_tables_columns';
+  tables: string[];
+  columns: { [table: string]: string[] };
+  num_questions: number;
+}
+
+export interface QuestionGenerationProgress {
+  current: number;
+  total: number;
+  generatedQuestions: Array<{
+    id: string;
+    question: string;
+    sql: string;
+    involved_columns?: Array<{ table: string; column: string }>;
+  }>;
+}
+
+export interface GenerationScopeConfig {
+  type: GenerationScope['type'];
+  tables: string[];
+  columns: { [table: string]: string[] };
+  numQuestions: number;
+}
+
+export interface QuestionGenerationResponse {
+  success: boolean;
+  generated_count: number;
+  scope: string;
+  message: string;
   error_message?: string;
-  started_at?: string;
-  completed_at?: string;
-  created_at: string;
 }
 
 export interface GenerateDataRequest {

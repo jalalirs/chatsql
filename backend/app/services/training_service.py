@@ -154,7 +154,9 @@ class TrainingService:
                 success=True,
                 total_generated=total_generated,
                 failed_count=failed_count,
-                model_id=model_id
+                examples=[],
+                documentation=[],
+                generation_time=0.0
             )
             
         except Exception as e:
@@ -170,8 +172,12 @@ class TrainingService:
 
             return GeneratedDataResult(
                 success=False,
-                error_message=error_msg,
-                model_id=model_id
+                total_generated=0,
+                failed_count=0,
+                examples=[],
+                documentation=[],
+                generation_time=0.0,
+                error_message=error_msg
             )
     
     async def generate_column_descriptions(
@@ -1137,11 +1143,15 @@ Generate exactly {num_examples} examples:"""
             
             return [
                 ModelTrainingQuestionResponse(
-                    id=str(q.id),
-                    model_id=str(q.model_id),
+                    id=q.id,
+                    model_id=q.model_id,
                     question=q.question,
                     sql=q.sql,
-                    table_name=q.table_name,
+                    involved_columns=q.involved_columns,
+                    query_type=q.query_type,
+                    difficulty=q.difficulty,
+                    generated_by=q.generated_by,
+                    is_validated=q.is_validated,
                     validation_notes=q.validation_notes,
                     created_at=q.created_at,
                     updated_at=q.updated_at
@@ -1164,7 +1174,11 @@ Generate exactly {num_examples} examples:"""
                 model_id=model_id,
                 question=question_data.question,
                 sql=question_data.sql,
-                table_name=question_data.table_name,
+                involved_columns=question_data.involved_columns,
+                query_type=question_data.query_type,
+                difficulty=question_data.difficulty,
+                generated_by=question_data.generated_by,
+                is_validated=question_data.is_validated,
                 validation_notes=question_data.validation_notes
             )
             
@@ -1177,7 +1191,11 @@ Generate exactly {num_examples} examples:"""
                 model_id=str(question.model_id),
                 question=question.question,
                 sql=question.sql,
-                table_name=question.table_name,
+                involved_columns=question.involved_columns,
+                query_type=question.query_type,
+                difficulty=question.difficulty,
+                generated_by=question.generated_by,
+                is_validated=question.is_validated,
                 validation_notes=question.validation_notes,
                 created_at=question.created_at,
                 updated_at=question.updated_at
@@ -1207,8 +1225,16 @@ Generate exactly {num_examples} examples:"""
                 question.question = question_data.question
             if question_data.sql is not None:
                 question.sql = question_data.sql
-            if question_data.table_name is not None:
-                question.table_name = question_data.table_name
+            if question_data.involved_columns is not None:
+                question.involved_columns = question_data.involved_columns
+            if question_data.query_type is not None:
+                question.query_type = question_data.query_type
+            if question_data.difficulty is not None:
+                question.difficulty = question_data.difficulty
+            if question_data.generated_by is not None:
+                question.generated_by = question_data.generated_by
+            if question_data.is_validated is not None:
+                question.is_validated = question_data.is_validated
             if question_data.validation_notes is not None:
                 question.validation_notes = question_data.validation_notes
             
@@ -1220,7 +1246,11 @@ Generate exactly {num_examples} examples:"""
                 model_id=str(question.model_id),
                 question=question.question,
                 sql=question.sql,
-                table_name=question.table_name,
+                involved_columns=question.involved_columns,
+                query_type=question.query_type,
+                difficulty=question.difficulty,
+                generated_by=question.generated_by,
+                is_validated=question.is_validated,
                 validation_notes=question.validation_notes,
                 created_at=question.created_at,
                 updated_at=question.updated_at
@@ -1448,7 +1478,12 @@ Generate exactly {num_examples} examples:"""
                         "id": q.id,
                         "question": q.question,
                         "sql": q.sql,
-                        "table_name": q.table_name,
+                        "involved_columns": q.involved_columns,
+                        "query_type": q.query_type,
+                        "difficulty": q.difficulty,
+                        "generated_by": q.generated_by,
+                        "is_validated": q.is_validated,
+                        "validation_notes": q.validation_notes,
                         "created_at": q.created_at.isoformat() if q.created_at else None
                     } for q in questions
                 ],
@@ -1608,6 +1643,402 @@ Generate exactly {num_examples} examples:"""
                 "success": False,
                 "error": str(e)
             }
+
+    async def generate_enhanced_training_questions(
+        self,
+        db: AsyncSession,
+        user: User,
+        model_id: str,
+        scope_config: Dict[str, Any],
+        task_id: str
+    ) -> Dict[str, Any]:
+        """Generate enhanced training questions with precise column associations"""
+        sse_logger = SSELogger(sse_manager, task_id, "enhanced_question_generation")
+        
+        try:
+            await sse_logger.info(f"Starting enhanced question generation for model {model_id}")
+            await sse_logger.progress(10, "Preparing generation scope...")
+            
+            # Get model and verify ownership
+            model = await self._get_model_and_verify_ownership(db, model_id, user)
+            if not model:
+                raise ValueError(f"Model {model_id} not found or access denied for user {user.email}")
+            
+            # Prepare generation scope
+            scope = await self._prepare_generation_scope(db, model_id, scope_config)
+            
+            await sse_logger.progress(20, f"Scope prepared: {scope['type']}")
+            
+            # Load and process prompt template
+            prompt = self._load_and_process_prompt(scope['type'], scope)
+            
+            await sse_logger.progress(30, "Generating questions with LLM...")
+            
+            # Generate structured questions
+            llm_response = await self._generate_structured_questions(prompt)
+            
+            await sse_logger.progress(60, "Validating and processing questions...")
+            
+            # Validate and associate questions
+            validated_questions = self._validate_and_associate_questions(llm_response, scope)
+            
+            await sse_logger.progress(80, f"Validated {len(validated_questions)} questions")
+            
+            # Save to database
+            saved_count = await self._save_structured_questions(db, model_id, validated_questions)
+            
+            await sse_logger.progress(100, f"Successfully saved {saved_count} questions")
+            
+            return {
+                "success": True,
+                "generated_count": saved_count,
+                "scope": scope['type'],
+                "message": f"Generated {saved_count} questions for {scope['type']}"
+            }
+            
+        except Exception as e:
+            error_msg = f"Enhanced question generation failed: {str(e)}"
+            await sse_logger.error(error_msg)
+            logger.error(error_msg)
+            
+            return {
+                "success": False,
+                "generated_count": 0,
+                "error_message": error_msg
+            }
+
+    async def _prepare_generation_scope(
+        self,
+        db: AsyncSession,
+        model_id: str,
+        scope_config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Prepare generation scope with schema information"""
+        
+        scope_type = scope_config.get('type', 'single_table')
+        tables = scope_config.get('tables', [])
+        columns = scope_config.get('columns', {})
+        num_questions = scope_config.get('num_questions', 20)
+        
+        # Get tracked tables and columns
+        tracked_data = await self._get_tracked_tables_and_columns(db, model_id, tables)
+        
+        # Build schema information
+        schema_info = self._build_schema_info_for_scope(tracked_data, columns)
+        
+        return {
+            'type': scope_type,
+            'tables': tables,
+            'columns': columns,
+            'schema_info': schema_info,
+            'num_questions': num_questions,
+            'tracked_data': tracked_data
+        }
+
+    async def _get_tracked_tables_and_columns(
+        self,
+        db: AsyncSession,
+        model_id: str,
+        tables: List[str]
+    ) -> Dict[str, Any]:
+        """Get tracked tables and their columns for the model"""
+        
+        # Get tracked tables
+        query = select(ModelTrackedTable).where(
+            and_(
+                ModelTrackedTable.model_id == model_id,
+                ModelTrackedTable.is_active == True
+            )
+        )
+        
+        if tables:
+            query = query.where(ModelTrackedTable.table_name.in_(tables))
+        
+        result = await db.execute(query)
+        tracked_tables = result.scalars().all()
+        
+        # Get columns for each table
+        table_data = {}
+        for table in tracked_tables:
+            columns_query = select(ModelTrackedColumn).where(
+                and_(
+                    ModelTrackedColumn.model_tracked_table_id == table.id,
+                    ModelTrackedColumn.is_tracked == True
+                )
+            )
+            columns_result = await db.execute(columns_query)
+            columns = columns_result.scalars().all()
+            
+            table_data[table.table_name] = {
+                'table': table,
+                'columns': columns
+            }
+        
+        return table_data
+
+    def _build_schema_info_for_scope(
+        self,
+        tracked_data: Dict[str, Any],
+        columns: Dict[str, List[str]]
+    ) -> str:
+        """Build detailed schema information for prompt"""
+        
+        schema_lines = []
+        
+        for table_name, table_info in tracked_data.items():
+            table = table_info['table']
+            all_columns = table_info['columns']
+            
+            # Filter columns if specific columns are requested
+            if table_name in columns:
+                selected_columns = [col for col in all_columns if col.column_name in columns[table_name]]
+            else:
+                selected_columns = all_columns
+            
+            schema_lines.append(f"\nTable: {table_name}")
+            if table.schema_name:
+                schema_lines.append(f"Schema: {table.schema_name}")
+            
+            for col in selected_columns:
+                schema_lines.append(
+                    f"- {col.column_name}"
+                    f" - Description: {col.description or 'No description'}"
+                )
+        
+        return "\n".join(schema_lines)
+
+    def _load_and_process_prompt(
+        self,
+        template_name: str,
+        scope_config: Dict[str, Any]
+    ) -> str:
+        """Load prompt template and replace placeholders"""
+        
+        # Load template file
+        template_path = f"app/prompts/training/{template_name}.txt"
+        try:
+            with open(template_path, 'r') as f:
+                template = f.read()
+        except FileNotFoundError:
+            # Fallback to single_table template
+            with open("app/prompts/training/single_table.txt", 'r') as f:
+                template = f.read()
+        
+        # Format columns list
+        columns_list = self._format_columns_list(scope_config['columns'])
+        
+        # Replace placeholders
+        prompt = template.format(
+            num_questions=scope_config['num_questions'],
+            table_name=scope_config['tables'][0] if len(scope_config['tables']) == 1 else "multiple tables",
+            table_names=", ".join(scope_config['tables']),
+            table_schema=scope_config['schema_info'],
+            columns_list=columns_list
+        )
+        
+        return prompt
+
+
+    def _format_columns_list(self, columns: Dict[str, List[str]]) -> str:
+        """Format columns list for prompt"""
+        if not columns:
+            return "All available columns"
+        
+        lines = []
+        for table, cols in columns.items():
+            lines.append(f"{table}: {', '.join(cols)}")
+        
+        return "\n".join(lines)
+
+    async def _generate_structured_questions(self, prompt: str) -> Dict[str, Any]:
+        """Generate questions with structured JSON response"""
+        
+        client = self._get_openai_client()
+        
+        # Load system prompt
+        system_prompt = self._load_system_prompt()
+        
+        response = client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=4000
+        )
+        
+        content = response.choices[0].message.content
+        
+        # Debug: Log the raw response
+        logger.info(f"Raw LLM response: {content}")
+        
+        try:
+            parsed_response = json.loads(content)
+            logger.info(f"Parsed response keys: {list(parsed_response.keys())}")
+            if 'questions' in parsed_response:
+                logger.info(f"Number of questions: {len(parsed_response['questions'])}")
+                for i, q in enumerate(parsed_response['questions']):
+                    logger.info(f"Question {i+1} keys: {list(q.keys())}")
+            return parsed_response
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {e}")
+            logger.error(f"Raw content: {content}")
+            raise
+
+    def _load_system_prompt(self) -> str:
+        """Load the base system prompt"""
+        try:
+            with open("app/prompts/training/base_system.txt", 'r') as f:
+                return f.read()
+        except FileNotFoundError:
+            return "You are an expert SQL query generator specializing in Microsoft SQL Server syntax."
+
+    def _validate_and_associate_questions(
+        self,
+        llm_response: Dict[str, Any],
+        scope_config: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Validate and parse structured question response"""
+        
+        validated_questions = []
+        
+        if 'questions' not in llm_response:
+            logger.error("Invalid LLM response format: missing 'questions' key")
+            return validated_questions
+        
+        for question_data in llm_response["questions"]:
+            try:
+                # Validate required fields
+                if not self._validate_required_fields(question_data):
+                    continue
+                    
+                # Validate column associations
+                if not self._validate_column_associations(question_data["involved_columns"], scope_config):
+                    continue
+                    
+                # Validate SQL syntax (basic check)
+                if not self._validate_sql_syntax(question_data["sql"]):
+                    continue
+                    
+                validated_questions.append(question_data)
+                
+            except Exception as e:
+                logger.warning(f"Failed to validate question: {e}")
+                continue
+        
+        return validated_questions
+
+    def _validate_required_fields(self, question_data: Dict[str, Any]) -> bool:
+        """Validate that all required fields are present"""
+        required_fields = ["question", "sql", "involved_columns", "query_type", "difficulty"]
+        
+        for field in required_fields:
+            if field not in question_data or not question_data[field]:
+                logger.warning(f"Missing required field: {field}")
+                return False
+        
+        # Normalize query_type to standard values
+        query_type = question_data.get("query_type", "").lower()
+        if "select" in query_type and "join" not in query_type:
+            question_data["query_type"] = "simple_select"
+        elif "join" in query_type:
+            question_data["query_type"] = "join"
+        elif "aggregat" in query_type or "group" in query_type or "sum" in query_type or "count" in query_type or "avg" in query_type:
+            question_data["query_type"] = "aggregation"
+        elif "subquery" in query_type or "in (" in question_data.get("sql", "").lower():
+            question_data["query_type"] = "subquery"
+        elif "window" in query_type or "over (" in question_data.get("sql", "").lower():
+            question_data["query_type"] = "window_function"
+        elif "cte" in query_type or "with " in question_data.get("sql", "").lower():
+            question_data["query_type"] = "cte"
+        else:
+            question_data["query_type"] = "simple_select"
+        
+        return True
+
+    def _validate_column_associations(
+        self,
+        involved_columns: List[Dict[str, str]],
+        scope_config: Dict[str, Any]
+    ) -> bool:
+        """Validate that involved columns are within the scope"""
+        
+        if not involved_columns:
+            return False
+        
+        scope_columns = scope_config.get('columns', {})
+        tracked_data = scope_config.get('tracked_data', {})
+        
+        for col_assoc in involved_columns:
+            table = col_assoc.get('table')
+            column = col_assoc.get('column')
+            
+            if not table or not column:
+                return False
+            
+            # Check if table is in scope
+            if table not in tracked_data:
+                return False
+            
+            # Check if column is allowed (if specific columns are specified)
+            if scope_columns and table in scope_columns:
+                if column not in scope_columns[table]:
+                    return False
+        
+        return True
+
+    def _validate_sql_syntax(self, sql: str) -> bool:
+        """Basic SQL syntax validation"""
+        if not sql or not sql.strip():
+            return False
+        
+        # Basic checks
+        sql_upper = sql.upper()
+        
+        # Must start with SELECT
+        if not sql_upper.strip().startswith('SELECT'):
+            return False
+        
+        # Must contain FROM
+        if 'FROM' not in sql_upper:
+            return False
+        
+        return True
+
+    async def _save_structured_questions(
+        self,
+        db: AsyncSession,
+        model_id: str,
+        questions: List[Dict[str, Any]]
+    ) -> int:
+        """Save structured questions with column associations"""
+        
+        saved_count = 0
+        
+        for question_data in questions:
+            try:
+                training_question = ModelTrainingQuestion(
+                    model_id=model_id,
+                    question=question_data["question"],
+                    sql=question_data["sql"],
+                    involved_columns=question_data["involved_columns"],
+                    query_type=question_data.get("query_type", "unknown"),
+                    difficulty=question_data.get("difficulty", "medium"),
+                    generated_by="ai",
+                    is_validated=False
+                )
+                
+                db.add(training_question)
+                saved_count += 1
+                
+            except Exception as e:
+                logger.error(f"Failed to save question: {e}")
+                continue
+        
+        await db.commit()
+        return saved_count
 
 # Global instance
 training_service = TrainingService()

@@ -1,0 +1,35 @@
+Generate {num_questions} natural language questions and their corresponding SQL queries for the table: {table_name}.
+
+Table Schema:
+{table_schema}
+
+Available Columns:
+{columns_list}
+
+Guidelines:
+- Use Microsoft SQL Server syntax (square brackets for identifiers, TOP N instead of LIMIT)
+- Questions should be realistic and varied (filtering, aggregation, sorting, etc.)
+- SQL should be correct and executable
+- Each question must use at least one column from the specified table
+- Include a mix of simple SELECT, WHERE conditions, ORDER BY, GROUP BY, and aggregate functions
+- Consider the data types and sample values when generating realistic questions
+
+IMPORTANT: Return your response as a valid JSON object with this exact structure:
+{{
+  "questions": [
+    {{
+      "question": "Natural language question here",
+      "sql": "SELECT statement here",
+      "involved_columns": [
+        {{
+          "table": "{table_name}",
+          "column": "column_name"
+        }}
+      ],
+      "query_type": "simple_select",
+      "difficulty": "easy"
+    }}
+  ]
+}}
+
+Generate exactly {num_questions} questions:

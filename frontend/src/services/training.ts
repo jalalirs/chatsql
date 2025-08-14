@@ -15,7 +15,10 @@ import {
   ColumnCreateRequest,
   ColumnUpdateRequest,
   ModelQueryRequest,
-  ModelQueryResponse
+  ModelQueryResponse,
+  QuestionGenerationRequest,
+  QuestionGenerationResponse,
+  QuestionGenerationProgress
 } from '../types/models';
 
 export const trainingService = {
@@ -85,7 +88,12 @@ export const trainingService = {
   // Question methods
   async getQuestions(modelId: string): Promise<{questions: ModelTrainingQuestion[], total: number, model_id: string}> {
     const response = await api.get(`/training/models/${modelId}/questions`);
-    return response.data;
+    // The backend returns the questions array directly, so we need to wrap it
+    return {
+      questions: response.data,
+      total: response.data.length,
+      model_id: modelId
+    };
   },
 
   async createQuestion(modelId: string, data: QuestionCreateRequest): Promise<ModelTrainingQuestion> {
@@ -146,6 +154,57 @@ export const trainingService = {
   async generateAllDescriptions(modelId: string): Promise<{success: boolean, generated_count: number, message: string}> {
     const response = await api.post(`/training/models/${modelId}/generate-all-descriptions`);
     return response.data;
+  },
+
+  // Enhanced Question Generation with SSE
+  async generateEnhancedQuestions(
+    modelId: string, 
+    scopeConfig: QuestionGenerationRequest,
+    onProgress?: (progress: QuestionGenerationProgress) => void
+  ): Promise<QuestionGenerationResponse> {
+    try {
+      const response = await api.post(`/training/models/${modelId}/generate-questions`, scopeConfig);
+      
+      // If there's a stream URL, set up SSE for real-time progress
+      if (response.data.stream_url) {
+        const eventSource = new EventSource(response.data.stream_url);
+        
+        eventSource.addEventListener('question_generated', (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (onProgress) {
+              onProgress({
+                current: data.example_number,
+                total: scopeConfig.num_questions,
+                generatedQuestions: [{
+                  id: `live-${data.example_number}`,
+                  question: data.question,
+                  sql: data.sql,
+                  involved_columns: data.involved_columns
+                }]
+              });
+            }
+          } catch (e) {
+            console.error('Error parsing SSE data:', e);
+          }
+        });
+
+        eventSource.addEventListener('generation_completed', (event) => {
+          console.log('✅ Question generation completed:', event.data);
+          eventSource.close();
+        });
+
+        eventSource.addEventListener('error', (event) => {
+          console.error('❌ SSE connection error:', event);
+          eventSource.close();
+        });
+      }
+      
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to generate enhanced questions:', error);
+      throw error;
+    }
   }
 };
 
@@ -171,3 +230,4 @@ export const deleteColumn = trainingService.deleteColumn;
 export const generateColumnDescriptions = trainingService.generateColumnDescriptions;
 export const generateTableDescriptions = trainingService.generateTableDescriptions;
 export const generateAllDescriptions = trainingService.generateAllDescriptions;
+export const generateEnhancedQuestions = trainingService.generateEnhancedQuestions;

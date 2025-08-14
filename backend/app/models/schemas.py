@@ -588,6 +588,11 @@ class ModelTrainingDocumentationResponse(ModelTrainingDocumentationBase):
 class ModelTrainingQuestionBase(BaseModel):
     question: str
     sql: str
+    involved_columns: Optional[List[Dict[str, str]]] = None  # [{"table": "t1", "column": "c1"}]
+    query_type: Optional[str] = None  # simple_select, join, aggregation, etc.
+    difficulty: Optional[str] = None  # easy, medium, hard
+    generated_by: Optional[str] = "manual"  # ai, manual
+    is_validated: Optional[bool] = False
     validation_notes: Optional[str] = None
 
 class ModelTrainingQuestionCreate(ModelTrainingQuestionBase):
@@ -596,6 +601,11 @@ class ModelTrainingQuestionCreate(ModelTrainingQuestionBase):
 class ModelTrainingQuestionUpdate(BaseModel):
     question: Optional[str] = None
     sql: Optional[str] = None
+    involved_columns: Optional[List[Dict[str, str]]] = None
+    query_type: Optional[str] = None
+    difficulty: Optional[str] = None
+    generated_by: Optional[str] = None
+    is_validated: Optional[bool] = None
     validation_notes: Optional[str] = None
 
 class ModelTrainingQuestionResponse(ModelTrainingQuestionBase):
@@ -710,3 +720,17 @@ class ColumnDescriptionGenerationRequest(BaseModel):
 
 class TableDescriptionGenerationRequest(BaseModel):
     table_name: Optional[str] = None
+
+# Enhanced Training Generation Schemas
+class QuestionGenerationRequest(BaseModel):
+    type: str = Field(..., description="Generation scope: 'single_table', 'specific_columns', 'multiple_tables', 'multiple_tables_columns'")
+    tables: List[str] = Field(..., description="List of table names to use")
+    columns: Dict[str, List[str]] = Field(default={}, description="Dictionary mapping table names to lists of column names")
+    num_questions: int = Field(default=20, ge=1, le=100, description="Number of questions to generate")
+
+class QuestionGenerationResponse(BaseModel):
+    success: bool
+    generated_count: int
+    scope: str
+    message: str
+    error_message: Optional[str] = None

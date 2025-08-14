@@ -9,7 +9,8 @@ from app.models.schemas import (
     ModelTrainingDocumentationCreate, ModelTrainingDocumentationUpdate, ModelTrainingDocumentationResponse,
     ModelTrainingQuestionCreate, ModelTrainingQuestionUpdate, ModelTrainingQuestionResponse,
     ModelTrainingColumnCreate, ModelTrainingColumnUpdate, ModelTrainingColumnResponse,
-    ModelTrainingRequest, ModelTrainingResponse, ModelQueryRequest, ModelQueryResponse
+    ModelTrainingRequest, ModelTrainingResponse, ModelQueryRequest, ModelQueryResponse,
+    QuestionGenerationRequest, QuestionGenerationResponse
 )
 from app.services.training_service import training_service
 from app.models.database import User
@@ -452,3 +453,35 @@ async def generate_all_descriptions(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate all descriptions: {str(e)}")
+
+# Enhanced Training Generation Endpoint
+@router.post("/models/{model_id}/generate-questions", response_model=QuestionGenerationResponse)
+async def generate_enhanced_questions(
+    scope_config: QuestionGenerationRequest,
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Generate enhanced training questions with specific scope and column associations"""
+    try:
+        result = await training_service.generate_enhanced_training_questions(
+            db=db,
+            user=current_user,
+            model_id=str(model_id),
+            scope_config=scope_config.dict(),
+            task_id=str(model_id)  # For now, using model_id as task_id
+        )
+        
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result.get("error_message", "Generation failed"))
+        
+        return QuestionGenerationResponse(
+            success=True,
+            generated_count=result["generated_count"],
+            scope=result["scope"],
+            message=result["message"]
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate enhanced questions: {str(e)}")

@@ -361,6 +361,11 @@ class ModelTrainingQuestion(Base):
     
     question = Column(Text, nullable=False)
     sql = Column(Text, nullable=False)
+    involved_columns = Column(JSONB, nullable=True)  # [{"table": "t1", "column": "c1"}]
+    query_type = Column(String(100), nullable=True)  # simple_select, join, aggregation, etc.
+    difficulty = Column(String(50), nullable=True)  # easy, medium, hard
+    generated_by = Column(String(50), default='manual')  # ai, manual
+    is_validated = Column(Boolean, default=False)
     validation_notes = Column(Text, nullable=True)
     
     # Timestamps

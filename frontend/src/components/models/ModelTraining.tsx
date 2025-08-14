@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Plus, Edit2, Trash2, Save, X, Play, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react';
 import { ModelDetail } from '../../types/models';
 import { 
   getTrainingData, 
@@ -7,7 +8,11 @@ import {
   createQuestion,
   createColumn,
   updateDocumentation,
-  deleteDocumentation
+  deleteDocumentation,
+  getQuestions,
+  updateQuestion,
+  deleteQuestion,
+  generateEnhancedQuestions
 } from '../../services/training';
 import { getTemplates, DocumentationTemplate } from '../../services/templates';
 
@@ -183,6 +188,7 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate }) =
               onUpdate={loadTrainingData}
               showAdd={showAddQuestion}
               onToggleAdd={() => setShowAddQuestion(!showAddQuestion)}
+              model={model}
             />
           )}
           {activeTab === 'columns' && (
@@ -439,121 +445,844 @@ const TrainingQuestions: React.FC<{
   onUpdate: () => void;
   showAdd: boolean;
   onToggleAdd: () => void;
-}> = ({ trainingData, modelId, onUpdate, showAdd, onToggleAdd }) => {
-  const [newQuestion, setNewQuestion] = useState({
-    question: '',
-    answer: '',
-    table_name: ''
-  });
-  const [submitting, setSubmitting] = useState(false);
+  model: any; // Add model prop for tracked tables
+}> = ({ trainingData, modelId, onUpdate, showAdd, onToggleAdd, model }) => {
+  const [questions, setQuestions] = useState<any[]>([]);
+  
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [generationProgress, setGenerationProgress] = useState({ 
+    current: 0, 
+    total: 0, 
+    generatedQuestions: [] as Array<{
+      id: string;
+      question: string;
+      sql: string;
+      involved_columns?: Array<{ table: string; column: string }>;
+    }>
+  });
+  
+  // Tracked tables and columns state
+  const [trackedTables, setTrackedTables] = useState<any[]>([]);
+  const [tableColumns, setTableColumns] = useState<{[tableId: string]: any[]}>({});
+  
+  // Generation scope state
+  const [generationScope, setGenerationScope] = useState({
+    tables: [] as string[],
+    columns: {} as { [table: string]: string[] },
+    numQuestions: 20
+  });
+  
+  // CRUD states
+  const [editingQuestion, setEditingQuestion] = useState<string | null>(null);
+  const [creatingQuestion, setCreatingQuestion] = useState(false);
+  const [deletingQuestion, setDeletingQuestion] = useState<string | null>(null);
+  const [expandedQuestions, setExpandedQuestions] = useState<Set<string>>(new Set());
+  
+  // Form state
+  const [formData, setFormData] = useState({
+    question: '',
+    sql: '',
+    validation_notes: ''
+  });
+
+  useEffect(() => {
+    loadQuestions();
+    loadTrackedTables();
+  }, [modelId]);
+
+  const loadTrackedTables = async () => {
     try {
-      setSubmitting(true);
-      await createQuestion(modelId, {
-        question: newQuestion.question,
-        sql: newQuestion.answer,
-        generated_by: 'manual'
-      });
-      setNewQuestion({ question: '', answer: '', table_name: '' });
-      onToggleAdd();
-      onUpdate();
+      // Import the model service functions
+      const { getModelTrackedTables, getModelTrackedColumns } = await import('../../services/models');
+      const { getTableColumns } = await import('../../services/connections');
+      
+      // Load tracked tables
+      const tables = await getModelTrackedTables(modelId);
+      console.log('🔍 Loaded tracked tables:', tables);
+      setTrackedTables(tables);
+      
+      // Load columns for each tracked table
+      for (const table of tables) {
+        try {
+          // Load database schema columns
+          const schemaColumns = await getTableColumns(model.connection_id, table.table_name);
+          
+          // Load existing tracked columns from backend
+          let trackedColumns: any[] = [];
+          try {
+            trackedColumns = await getModelTrackedColumns(modelId, table.id);
+          } catch (error) {
+            console.error('❌ Failed to load tracked columns:', error);
+            // Continue with empty array
+          }
+          
+          // Merge schema columns with existing tracking information
+          const mergedColumns = schemaColumns.map(schemaCol => {
+            const trackedCol = trackedColumns.find(tc => tc.column_name === schemaCol.column_name);
+            return {
+              ...schemaCol,
+              is_tracked: trackedCol ? trackedCol.is_tracked : false,
+              description: trackedCol?.description || ''
+            };
+          });
+          
+          setTableColumns(prev => ({
+            ...prev,
+            [table.id]: mergedColumns
+          }));
+        } catch (error) {
+          console.error(`Failed to load columns for table ${table.table_name}:`, error);
+        }
+      }
     } catch (error) {
-      console.error('Failed to add question:', error);
-      // TODO: Add proper error handling/notification
-    } finally {
-      setSubmitting(false);
+      console.error('Failed to load tracked tables:', error);
     }
   };
 
-  return (
-  <div className="space-y-4">
-    <div className="flex justify-between items-center">
-      <h4 className="text-sm font-medium text-gray-900">Questions & Answers</h4>
-        <button 
-          onClick={onToggleAdd}
-          className="text-sm text-indigo-600 hover:text-indigo-500"
-        >
-          {showAdd ? 'Cancel' : 'Add New'}
-        </button>
-      </div>
+  const loadQuestions = async () => {
+    try {
+      setError(null);
+             const response = await getQuestions(modelId);
+       console.log('🔍 Response from getQuestions:', response);
+       console.log('🔍 Questions array:', response.questions);
+       
+       setQuestions(response.questions || []);
+    } catch (err: any) {
+      console.error('Failed to load questions:', err);
+      setError(err.response?.data?.detail || err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateQuestions = async () => {
+    setGenerating(true);
+    setError(null);
+    setGenerationProgress({ 
+      current: 0, 
+      total: generationScope.numQuestions, 
+      generatedQuestions: [] as Array<{
+        id: string;
+        question: string;
+        sql: string;
+        involved_columns?: Array<{ table: string; column: string }>;
+      }>
+    });
+    
+    // Automatically infer scope type based on selection
+    let inferredType: 'single_table' | 'specific_columns' | 'multiple_tables' | 'multiple_tables_columns';
+    
+    if (generationScope.tables.length === 0) {
+      setError('Please select at least one table');
+      setGenerating(false);
+      return;
+    } else if (generationScope.tables.length === 1) {
+      // Single table - check if specific columns are selected
+      const hasSpecificColumns = generationScope.columns[generationScope.tables[0]]?.length > 0;
+      inferredType = hasSpecificColumns ? 'specific_columns' : 'single_table';
+    } else {
+      // Multiple tables - check if specific columns are selected
+      const hasSpecificColumns = Object.values(generationScope.columns).some(cols => cols.length > 0);
+      inferredType = hasSpecificColumns ? 'multiple_tables_columns' : 'multiple_tables';
+    }
+    
+    try {
+      await generateEnhancedQuestions(
+        modelId,
+        {
+          type: inferredType,
+          tables: generationScope.tables,
+          columns: generationScope.columns,
+          num_questions: generationScope.numQuestions
+        },
+        (progress) => {
+          setGenerationProgress(prev => ({
+            ...prev,
+            current: progress.current,
+            total: progress.total,
+            generatedQuestions: [...prev.generatedQuestions, ...progress.generatedQuestions]
+          }));
+        }
+      );
       
-      {showAdd && (
-        <form onSubmit={handleSubmit} className="border rounded-lg p-4 bg-gray-50">
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Question</label>
-              <input
-                type="text"
-                value={newQuestion.question}
-                onChange={(e) => setNewQuestion({...newQuestion, question: e.target.value})}
-                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                placeholder="Enter question..."
-                required
-              />
+      await loadQuestions(); // Reload questions after generation
+    } catch (err: any) {
+      console.error('Question generation failed:', err);
+      setError(err.response?.data?.detail || err.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleCreate = async () => {
+    try {
+      const createData = {
+        question: formData.question,
+        sql: formData.sql,
+        generated_by: "manual",
+        validation_notes: formData.validation_notes || undefined,
+        is_validated: false
+      };
+
+      await createQuestion(modelId, createData);
+      await loadQuestions();
+      setCreatingQuestion(false);
+      resetForm();
+    } catch (err: any) {
+      console.error('Failed to create question:', err);
+      setError(err.response?.data?.detail || err.message);
+    }
+  };
+
+  const handleUpdate = async (questionId: string) => {
+    try {
+      const updateData = {
+        question: formData.question,
+        sql: formData.sql,
+        validation_notes: formData.validation_notes || undefined,
+        is_validated: true
+      };
+
+      await updateQuestion(questionId, updateData);
+      await loadQuestions();
+      setEditingQuestion(null);
+      resetForm();
+    } catch (err: any) {
+      console.error('Failed to update question:', err);
+      setError(err.response?.data?.detail || err.message);
+    }
+  };
+
+  const handleDelete = async (questionId: string) => {
+    try {
+      await deleteQuestion(questionId);
+      await loadQuestions();
+      setDeletingQuestion(null);
+    } catch (err: any) {
+      console.error('Failed to delete question:', err);
+      setError(err.response?.data?.detail || err.message);
+    }
+  };
+
+  const startEdit = (question: any) => {
+    setFormData({
+      question: question.question,
+      sql: question.sql,
+      validation_notes: question.validation_notes || ''
+    });
+    setEditingQuestion(question.id);
+  };
+
+  const startCreate = () => {
+    resetForm();
+    setCreatingQuestion(true);
+  };
+
+  const resetForm = () => {
+    setFormData({
+      question: '',
+      sql: '',
+      validation_notes: ''
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingQuestion(null);
+    setCreatingQuestion(false);
+    resetForm();
+  };
+
+  const toggleExpanded = (questionId: string) => {
+    const newExpanded = new Set(expandedQuestions);
+    if (newExpanded.has(questionId)) {
+      newExpanded.delete(questionId);
+    } else {
+      newExpanded.add(questionId);
+    }
+    setExpandedQuestions(newExpanded);
+  };
+
+  const getSourceBadgeColor = (generatedBy: string) => {
+    switch (generatedBy) {
+      case 'ai':
+        return 'bg-blue-100 text-blue-800';
+      case 'manual':
+        return 'bg-green-100 text-green-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <div className="flex items-center justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mr-3"></div>
+            <span className="text-gray-600">Loading training questions...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-medium text-gray-900">Training Questions & SQL</h2>
+            <p className="text-gray-600">
+              Question-SQL pairs that train the AI model
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <button
+              onClick={startCreate}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <Plus size={16} />
+              Add Question
+            </button>
+            
+            <button
+              onClick={generateQuestions}
+              disabled={generating || !generationScope.tables.length}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              <Play size={16} className={generating ? 'animate-spin' : ''} />
+              {generating ? 'Generating...' : 'Generate with AI'}
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-center gap-2 text-red-800">
+              <AlertCircle size={16} />
+              <span className="font-medium">Error</span>
             </div>
+            <p className="text-red-700 text-sm mt-1">{error}</p>
+          </div>
+        )}
+
+        {/* Generation Progress */}
+        {generating && (
+          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center gap-2 text-blue-800 mb-2">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+              <span className="font-medium">Generating questions... ({generationProgress.current}/{generationProgress.total})</span>
+            </div>
+            
+            <div className="w-full bg-blue-200 rounded-full h-2 mb-4">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                style={{ width: `${(generationProgress.current / generationProgress.total) * 100}%` }}
+              ></div>
+            </div>
+
+            {generationProgress.generatedQuestions.length > 0 && (
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                <h4 className="text-sm font-medium text-blue-800">Generated Questions:</h4>
+                {generationProgress.generatedQuestions.map((example) => (
+                  <div key={example.id} className="bg-white p-3 rounded border text-sm">
+                    <div className="font-medium text-gray-900 mb-1">
+                      Q: {example.question}
+                    </div>
+                    <div className="text-gray-600 font-mono text-xs bg-gray-50 p-2 rounded">
+                      {example.sql}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+                 {/* Generation Scope Selector */}
+         <div className="bg-white rounded-lg border border-gray-200 p-6">
+           <h4 className="text-lg font-medium text-gray-900 mb-4">Generation Scope</h4>
+           
+           <div className="grid grid-cols-3 gap-6">
+                           {/* Tables Panel */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h5 className="text-sm font-medium text-gray-900 mb-3">Available Tables</h5>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {trackedTables.length > 0 ? (
+                    trackedTables.map((table: any) => (
+                      <div
+                        key={table.id}
+                        onClick={() => {
+                          const isSelected = generationScope.tables.includes(table.table_name);
+                          if (isSelected) {
+                            // Remove table and its columns
+                            setGenerationScope(prev => ({
+                              ...prev,
+                              tables: prev.tables.filter(t => t !== table.table_name),
+                              columns: Object.fromEntries(
+                                Object.entries(prev.columns).filter(([t]) => t !== table.table_name)
+                              )
+                            }));
+                          } else {
+                            // Add table
+                            setGenerationScope(prev => ({
+                              ...prev,
+                              tables: [...prev.tables, table.table_name]
+                            }));
+                          }
+                        }}
+                        className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                          generationScope.tables.includes(table.table_name)
+                            ? 'bg-blue-100 border-blue-300 text-blue-900'
+                            : 'bg-white border-gray-200 hover:bg-gray-100'
+                        }`}
+                      >
+                        <div className="font-medium text-sm">{table.table_name}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {table.schema_name ? `${table.schema_name}.` : ''}{table.table_name}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <p className="text-sm">No tracked tables available</p>
+                      <p className="text-xs mt-1">Add tables in the Tracked Tables tab first</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+                           {/* Columns Panel */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h5 className="text-sm font-medium text-gray-900 mb-3">Available Columns</h5>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {generationScope.tables.length > 0 ? (
+                    generationScope.tables.map((tableName: string) => {
+                      const table = trackedTables.find((t: any) => t.table_name === tableName);
+                      if (!table) return null;
+                      
+                      const columns = tableColumns[table.id] || [];
+                      const trackedColumns = columns.filter((col: any) => col.is_tracked);
+                      
+                      return (
+                        <div key={tableName} className="space-y-2">
+                          <div className="text-xs font-medium text-gray-700 bg-gray-200 px-2 py-1 rounded">
+                            {tableName} ({trackedColumns.length} tracked)
+                          </div>
+                          {trackedColumns.map((column: any) => {
+                            const isSelected = generationScope.columns[tableName]?.includes(column.column_name) || false;
+                            return (
+                              <div
+                                key={`${tableName}.${column.column_name}`}
+                                onClick={() => {
+                                  const currentColumns = generationScope.columns[tableName] || [];
+                                  if (isSelected) {
+                                    // Remove column
+                                    setGenerationScope(prev => ({
+                                      ...prev,
+                                      columns: {
+                                        ...prev.columns,
+                                        [tableName]: currentColumns.filter(c => c !== column.column_name)
+                                      }
+                                    }));
+                                  } else {
+                                    // Add column
+                                    setGenerationScope(prev => ({
+                                      ...prev,
+                                      columns: {
+                                        ...prev.columns,
+                                        [tableName]: [...currentColumns, column.column_name]
+                                      }
+                                    }));
+                                  }
+                                }}
+                                className={`p-2 rounded border cursor-pointer transition-colors text-sm ${
+                                  isSelected
+                                    ? 'bg-green-100 border-green-300 text-green-900'
+                                    : 'bg-white border-gray-200 hover:bg-gray-100'
+                                }`}
+                              >
+                                <div className="font-medium">{column.column_name}</div>
+                                <div className="text-xs text-gray-500">{column.data_type || 'Unknown'}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <p className="text-sm">Select tables to see columns</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+             {/* Scope Preview Panel */}
+             <div className="bg-blue-50 rounded-lg p-4">
+               <h5 className="text-sm font-medium text-blue-900 mb-3">Current Scope</h5>
+               <div className="space-y-3">
+                 <div>
+                   <div className="text-xs font-medium text-blue-700 mb-1">Scope Type</div>
+                   <div className="text-sm text-blue-900 bg-blue-100 px-2 py-1 rounded">
+                     {generationScope.tables.length === 0 ? 'No tables selected' :
+                      generationScope.tables.length === 1 ? 'Single Table' :
+                      Object.values(generationScope.columns).some(cols => cols.length > 0) ? 'Multiple Tables + Columns' :
+                      'Multiple Tables'}
+                   </div>
+                 </div>
+                 
+                 <div>
+                   <div className="text-xs font-medium text-blue-700 mb-1">Selected Tables</div>
+                   <div className="space-y-1">
+                     {generationScope.tables.length > 0 ? (
+                       generationScope.tables.map((tableName: string) => (
+                         <div key={tableName} className="text-sm text-blue-900 bg-blue-100 px-2 py-1 rounded">
+                           {tableName}
+                         </div>
+                       ))
+                     ) : (
+                       <div className="text-sm text-blue-600 italic">No tables selected</div>
+                     )}
+                   </div>
+                 </div>
+                 
+                 <div>
+                   <div className="text-xs font-medium text-blue-700 mb-1">Selected Columns</div>
+                   <div className="space-y-1">
+                     {Object.entries(generationScope.columns).some(([_, cols]) => cols.length > 0) ? (
+                       Object.entries(generationScope.columns).map(([tableName, columns]) => 
+                         columns.map((columnName: string) => (
+                           <div key={`${tableName}.${columnName}`} className="text-sm text-blue-900 bg-blue-100 px-2 py-1 rounded">
+                             {tableName}.{columnName}
+                           </div>
+                         ))
+                       ).flat()
+                     ) : (
+                       <div className="text-sm text-blue-600 italic">All columns available</div>
+                     )}
+                   </div>
+                 </div>
+                 
+                 <div>
+                   <div className="text-xs font-medium text-blue-700 mb-1">Questions to Generate</div>
+                   <select
+                     value={generationScope.numQuestions}
+                     onChange={(e) => setGenerationScope(prev => ({ ...prev, numQuestions: parseInt(e.target.value) }))}
+                     className="w-full p-2 border border-blue-300 rounded text-sm bg-white"
+                   >
+                     <option value={5}>5 questions</option>
+                     <option value={10}>10 questions</option>
+                     <option value={20}>20 questions</option>
+                     <option value={30}>30 questions</option>
+                     <option value={50}>50 questions</option>
+                   </select>
+                 </div>
+               </div>
+             </div>
+           </div>
+         </div>
+
+        {/* Summary */}
+        <div className="grid grid-cols-4 gap-4">
+          <div className="bg-blue-50 rounded-lg p-4">
+            <div className="text-2xl font-bold text-blue-600">{questions.length}</div>
+            <div className="text-sm text-blue-700">Total Questions</div>
+          </div>
+          <div className="bg-green-50 rounded-lg p-4">
+            <div className="text-2xl font-bold text-green-600">
+              {questions.filter(q => q.generated_by === 'ai').length}
+            </div>
+            <div className="text-sm text-green-700">AI Generated</div>
+          </div>
+          <div className="bg-purple-50 rounded-lg p-4">
+            <div className="text-2xl font-bold text-purple-600">
+              {questions.filter(q => q.generated_by === 'manual').length}
+            </div>
+            <div className="text-sm text-purple-700">Manual</div>
+          </div>
+          <div className="bg-orange-50 rounded-lg p-4">
+            <div className="text-2xl font-bold text-orange-600">
+              {questions.filter(q => q.is_validated).length}
+            </div>
+            <div className="text-sm text-orange-700">Validated</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Create Form */}
+      {creatingQuestion && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Add New Question</h3>
+          
+          <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700">Answer</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Question</label>
               <textarea
-                value={newQuestion.answer}
-                onChange={(e) => setNewQuestion({...newQuestion, answer: e.target.value})}
-                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                value={formData.question}
+                onChange={(e) => setFormData(prev => ({ ...prev, question: e.target.value }))}
+                placeholder="Enter a natural language question..."
                 rows={3}
-                placeholder="Enter answer..."
-                required
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
+            
             <div>
-              <label className="block text-sm font-medium text-gray-700">Table Name</label>
-              <input
-                type="text"
-                value={newQuestion.table_name}
-                onChange={(e) => setNewQuestion({...newQuestion, table_name: e.target.value})}
-                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                placeholder="Enter table name..."
-                required
+              <label className="block text-sm font-medium text-gray-700 mb-2">SQL Query</label>
+              <textarea
+                value={formData.sql}
+                onChange={(e) => setFormData(prev => ({ ...prev, sql: e.target.value }))}
+                placeholder="SELECT * FROM ..."
+                rows={4}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
               />
             </div>
-            <div className="flex justify-end space-x-2">
-              <button
-                type="button"
-                onClick={onToggleAdd}
-                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="px-3 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {submitting ? 'Adding...' : 'Add Question'}
-              </button>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
+              <textarea
+                value={formData.validation_notes}
+                onChange={(e) => setFormData(prev => ({ ...prev, validation_notes: e.target.value }))}
+                placeholder="Add any notes about this question-SQL pair..."
+                rows={2}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
             </div>
-    </div>
-        </form>
+          </div>
+
+          <div className="flex gap-3 mt-6">
+            <button
+              onClick={handleCreate}
+              disabled={!formData.question || !formData.sql}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              <Save size={16} />
+              Create
+            </button>
+            <button
+              onClick={cancelEdit}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              <X size={16} />
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
 
-    <div className="space-y-3">
-      {trainingData?.questions?.map((q: any, index: number) => (
-        <div key={index} className="border rounded-lg p-4">
-          <div className="flex justify-between items-start">
-            <div className="flex-1">
-              <p className="text-sm font-medium text-gray-900">Q: {q.question}</p>
-              <p className="text-sm text-gray-600 mt-2">A: {q.answer}</p>
-              <p className="text-xs text-gray-500 mt-2">Table: {q.table_name}</p>
-            </div>
-            <div className="flex space-x-2 ml-4">
-              <button className="text-sm text-gray-500 hover:text-gray-700">Edit</button>
-              <button className="text-sm text-red-600 hover:text-red-700">Delete</button>
+      {/* Questions List */}
+      <div className="space-y-4">
+        {questions.map((question, index) => (
+          <div key={question.id} className="bg-white rounded-lg border border-gray-200 p-6">
+            {editingQuestion === question.id ? (
+              // Edit Form
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Question</label>
+                  <textarea
+                    value={formData.question}
+                    onChange={(e) => setFormData(prev => ({ ...prev, question: e.target.value }))}
+                    rows={3}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">SQL Query</label>
+                  <textarea
+                    value={formData.sql}
+                    onChange={(e) => setFormData(prev => ({ ...prev, sql: e.target.value }))}
+                    rows={4}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Validation Notes</label>
+                  <textarea
+                    value={formData.validation_notes}
+                    onChange={(e) => setFormData(prev => ({ ...prev, validation_notes: e.target.value }))}
+                    rows={2}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleUpdate(question.id)}
+                    className="flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                  >
+                    <Save size={14} />
+                    Save
+                  </button>
+                  <button
+                    onClick={cancelEdit}
+                    className="flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+                  >
+                    <X size={14} />
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // Display View
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded font-medium">
+                      Q{index + 1}
+                    </span>
+                    <span className={`px-2 py-1 text-xs rounded font-medium ${getSourceBadgeColor(question.generated_by)}`}>
+                      {question.generated_by === 'ai' ? 'AI Generated' : 'Manual'}
+                    </span>
+                    {question.is_validated && (
+                      <span className="flex items-center gap-1 text-green-600 text-sm">
+                        <CheckCircle size={14} />
+                        Validated
+                      </span>
+                    )}
+                    {question.query_type && (
+                      <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded">
+                        {question.query_type}
+                      </span>
+                    )}
+                    {question.difficulty && (
+                      <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded">
+                        {question.difficulty}
+                      </span>
+                    )}
+                  </div>
+                  
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => toggleExpanded(question.id)}
+                      className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                      title={expandedQuestions.has(question.id) ? "Collapse SQL" : "Expand SQL"}
+                    >
+                      {expandedQuestions.has(question.id) ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                    <button
+                      onClick={() => startEdit(question)}
+                      className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                    <button
+                      onClick={() => setDeletingQuestion(question.id)}
+                      className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="mb-3">
+                  <h4 className="text-sm font-medium text-gray-700 mb-1">Question</h4>
+                  <p className="text-gray-900">{question.question}</p>
+                </div>
+                
+                <div className="mb-3">
+                  <h4 className="text-sm font-medium text-gray-700 mb-1">SQL Query</h4>
+                  <div className="bg-gray-50 rounded p-3">
+                    <pre className={`text-sm text-gray-800 whitespace-pre-wrap font-mono ${
+                      expandedQuestions.has(question.id) ? '' : 'line-clamp-2'
+                    }`}>
+                      {question.sql}
+                    </pre>
+                  </div>
+                </div>
+                
+                {question.involved_columns && question.involved_columns.length > 0 && (
+                  <div className="mb-3">
+                    <h4 className="text-sm font-medium text-gray-700 mb-1">Involved Columns</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {question.involved_columns.map((col: any, idx: number) => (
+                        <span key={idx} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
+                          {col.table}.{col.column}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {question.validation_notes && (
+                  <div className="mb-3">
+                    <h4 className="text-sm font-medium text-gray-700 mb-1">Notes</h4>
+                    <p className="text-sm text-gray-600 bg-yellow-50 p-2 rounded">{question.validation_notes}</p>
+                  </div>
+                )}
+                
+                <div className="text-xs text-gray-500">
+                  Created: {new Date(question.created_at).toLocaleString()} | 
+                  Updated: {new Date(question.updated_at).toLocaleString()}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Empty State */}
+      {questions.length === 0 && !generating && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <div className="text-center py-8">
+            <Play size={48} className="mx-auto text-gray-400 mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No Training Questions</h3>
+            <p className="text-gray-600 mb-4">
+              Add training questions manually or generate them with AI to train your model.
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={startCreate}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                <Plus size={16} />
+                Add Question
+              </button>
+              <button
+                onClick={generateQuestions}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Play size={16} />
+                Generate with AI
+              </button>
             </div>
           </div>
         </div>
-      ))}
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingQuestion && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Delete Question</h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete this training question? This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleDelete(deletingQuestion)}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setDeletingQuestion(null)}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  </div>
-);
+  );
 };
 
 const TablesSchema: React.FC<{ 
