@@ -2015,6 +2015,73 @@ Generate exactly {num_examples} examples:"""
             )
             
             if result.success:
+                # Now train the Vanna model with the generated data
+                try:
+                    logger.info(f"Starting Vanna training for model {model_id}")
+                    
+                    # Get the model to access its connection
+                    stmt = select(Model).where(Model.id == model_id)
+                    result_model = await db.execute(stmt)
+                    model = result_model.scalar_one_or_none()
+                    
+                    if not model:
+                        raise ValueError("Model not found")
+                    
+                    # Get model's connection and configuration for Vanna training
+                    from app.services.connection_service import connection_service
+                    
+                    # Get the model's connection
+                    connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
+                    if not connection:
+                        raise ValueError(f"Connection not found for model {model_id}")
+                    
+                    # Create database config
+                    from app.models.vanna_models import DatabaseConfig
+                    db_config = DatabaseConfig(
+                        server=connection.server,
+                        database_name=connection.database_name,
+                        username=connection.username,
+                        password=connection.password,
+                        driver=connection.driver or 'ODBC Driver 17 for SQL Server',
+                        encrypt=connection.encrypt,
+                        trust_server_certificate=connection.trust_server_certificate
+                    )
+                    
+                    # Create Vanna config
+                    from app.models.vanna_models import VannaConfig
+                    vanna_config = VannaConfig(
+                        api_key=settings.OPENAI_API_KEY,
+                        base_url=settings.OPENAI_BASE_URL,
+                        model=settings.OPENAI_MODEL
+                    )
+                    
+                    # Train the Vanna model
+                    await vanna_service.setup_and_train_vanna(
+                        model_id=model_id,
+                        db_config=db_config,
+                        vanna_config=vanna_config,
+                        retrain=True,
+                        user=user,
+                        db=db
+                    )
+                    
+                    logger.info(f"Vanna training completed for model {model_id}")
+                    
+                except Exception as vanna_error:
+                    logger.error(f"Vanna training failed for model {model_id}: {vanna_error}")
+                    # Update model status back to draft on Vanna training failure
+                    stmt = update(Model).where(Model.id == model_id).values(
+                        status=ModelStatus.DRAFT,
+                        updated_at=datetime.utcnow()
+                    )
+                    await db.execute(stmt)
+                    await db.commit()
+                    
+                    return {
+                        "success": False,
+                        "error": f"Vanna training failed: {str(vanna_error)}"
+                    }
+                
                 # Update model status to trained
                 stmt = update(Model).where(Model.id == model_id).values(
                     status=ModelStatus.TRAINED,
@@ -2082,7 +2149,9 @@ Generate exactly {num_examples} examples:"""
                 return {"success": False, "error": "Model not found or access denied"}
             
             # Check if model is trained
+            logger.info(f"Model status check: {model.status} vs {ModelStatus.TRAINED}")
             if model.status != ModelStatus.TRAINED:
+                logger.error(f"Model {model_id} status is {model.status}, expected {ModelStatus.TRAINED}")
                 return {"success": False, "error": "Model is not trained"}
             
             # Query the model using vanna service

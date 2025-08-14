@@ -44,10 +44,7 @@ export const modelService = {
     return response.data;
   },
 
-  async activateModel(modelId: string): Promise<Model> {
-    const response = await api.post(`/models/${modelId}/activate`);
-    return response.data;
-  },
+
 
   async duplicateModel(modelId: string): Promise<Model> {
     const response = await api.post(`/models/${modelId}/duplicate`);
@@ -96,7 +93,7 @@ export const getModel = modelService.getModel;
 export const updateModel = modelService.updateModel;
 export const deleteModel = modelService.deleteModel;
 export const archiveModel = modelService.archiveModel;
-export const activateModel = modelService.activateModel;
+
 export const duplicateModel = modelService.duplicateModel;
 export const addTrackedTable = modelService.addTrackedTable;
 export const getModelTrackedTables = modelService.getTrackedTables;

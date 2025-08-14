@@ -78,8 +78,7 @@ export const ModelsPage: React.FC = () => {
         case 'archive':
           await modelService.archiveModel(modelId);
           break;
-        case 'activate':
-          await modelService.activateModel(modelId);
+        
           break;
         case 'duplicate':
           await modelService.duplicateModel(modelId);

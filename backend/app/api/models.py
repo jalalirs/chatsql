@@ -149,23 +149,7 @@ async def archive_model(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to archive model: {str(e)}")
 
-@router.post("/{model_id}/activate")
-async def activate_model(
-    model_id: UUID = Path(..., description="Model ID"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
-):
-    """Activate a model"""
-    try:
-        model_service = ModelService(db)
-        success = await model_service.activate_model(model_id, current_user.id)
-        if not success:
-            raise HTTPException(status_code=404, detail="Model not found")
-        return {"message": "Model activated successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to activate model: {str(e)}")
+
 
 @router.post("/{model_id}/duplicate", response_model=ModelResponse)
 async def duplicate_model(

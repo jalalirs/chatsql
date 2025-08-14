@@ -8,8 +8,9 @@ import time
 import stat
 import gc
 
-from app.models.vanna_models import VannaConfig, DatabaseConfig, VannaTrainingData
+from app.models.vanna_models import VannaConfig, DatabaseConfig, VannaTrainingData, TrainingDocumentation, TrainingExample
 from app.models.database import Model, ModelStatus, Connection
+from sqlalchemy import select
 from app.config import settings
 from app.core.vanna_wrapper import MyVanna
 from app.models.database import User
@@ -187,11 +188,19 @@ class VannaService:
             if progress_callback:
                 await progress_callback(20, "Connecting to database...")
             
-            # Create Vanna instance
-            vanna_instance = MyVanna(
-                config=vanna_config,
-                chroma_db_path=chromadb_path
-            )
+            # Create Vanna instance with ChromaDB path in config
+            logger.info(f"ChromaDB path being set: {chromadb_path}")
+            vanna_config_dict = vanna_config.dict() if hasattr(vanna_config, 'dict') else {
+                "api_key": vanna_config.api_key,
+                "base_url": vanna_config.base_url,
+                "model": vanna_config.model,
+                "path": chromadb_path
+            }
+            # Always add the path to the config dict
+            vanna_config_dict["path"] = chromadb_path
+            logger.info(f"Vanna config dict: {vanna_config_dict}")
+            
+            vanna_instance = MyVanna(config=vanna_config_dict)
             
             # Connect to database
             vanna_instance.connect_to_database(db_config)
@@ -247,19 +256,18 @@ class VannaService:
             # Convert to Vanna training data format
             training_data = VannaTrainingData(
                 documentation=[
-                    VannaTrainingDoc(
-                        title=doc.title,
-                        content=doc.content,
-                        doc_type=doc.doc_type
+                    TrainingDocumentation(
+                        doc_type=doc.doc_type,
+                        content=doc.content
                     ) for doc in documentation
                 ],
                 examples=[
-                    VannaTrainingExample(
+                    TrainingExample(
                         question=q.question,
                         sql=q.sql
                     ) for q in questions
                 ],
-                column_schemas=[
+                column_descriptions=[
                     {
                         "table_name": col.table_name,
                         "column_name": col.column_name,
@@ -275,11 +283,34 @@ class VannaService:
                     await progress_callback(100, "No training data available")
                 return
             
-            # Train the model
+            # Train the model with each type of data
             if progress_callback:
                 await progress_callback(60, "Training Vanna model...")
             
-            vanna_instance.train(training_data)
+            # Train with documentation
+            for doc in training_data.documentation:
+                try:
+                    vanna_instance.train(documentation=doc.content)
+                    logger.info(f"Trained documentation: {doc.doc_type}")
+                except Exception as e:
+                    logger.error(f"Failed to train documentation {doc.doc_type}: {e}")
+            
+            # Train with examples (question-SQL pairs)
+            for example in training_data.examples:
+                try:
+                    vanna_instance.train(question=example.question, sql=example.sql)
+                    logger.info(f"Trained example: {example.question[:50]}...")
+                except Exception as e:
+                    logger.error(f"Failed to train example: {e}")
+            
+            # Train with column descriptions as documentation
+            for col_desc in training_data.column_descriptions:
+                try:
+                    content = f"Column '{col_desc['column_name']}' ({col_desc['data_type']}): {col_desc['description']}"
+                    vanna_instance.train(documentation=content)
+                    logger.info(f"Trained column description: {col_desc['column_name']}")
+                except Exception as e:
+                    logger.error(f"Failed to train column description {col_desc['column_name']}: {e}")
             
             if progress_callback:
                 await progress_callback(100, "Training completed successfully")
@@ -310,18 +341,39 @@ class VannaService:
                 return None
             
             # Create fresh Vanna instance
-            vanna_config = VannaConfig(
-                api_key=settings.OPENAI_API_KEY,
-                base_url=settings.OPENAI_BASE_URL,
-                model=settings.OPENAI_MODEL
-            )
+            vanna_config_dict = {
+                "api_key": settings.OPENAI_API_KEY,
+                "base_url": settings.OPENAI_BASE_URL,
+                "model": settings.OPENAI_MODEL,
+                "path": chromadb_path
+            }
             
-            vanna_instance = MyVanna(
-                config=vanna_config,
-                chroma_db_path=chromadb_path
-            )
+            vanna_instance = MyVanna(config=vanna_config_dict)
             
             logger.info(f"Fresh Vanna instance created for model {model_id}{user_info}")
+            
+            # Get model's connection for database access
+            if db:
+                from app.services.connection_service import connection_service
+                model = await db.execute(select(Model).where(Model.id == model_id)).scalar_one_or_none()
+                if model:
+                    connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
+                    if connection:
+                        # Create database config
+                        from app.models.vanna_models import DatabaseConfig
+                        db_config = DatabaseConfig(
+                            server=connection.server,
+                            database_name=connection.database_name,
+                            username=connection.username,
+                            password=connection.password,
+                            driver=connection.driver or 'ODBC Driver 17 for SQL Server',
+                            encrypt=connection.encrypt,
+                            trust_server_certificate=connection.trust_server_certificate
+                        )
+                        
+                        # Connect to database
+                        vanna_instance.connect_to_database(db_config)
+                        logger.info(f"Connected to database for querying model {model_id}{user_info}")
             
             # Execute query
             result = vanna_instance.generate_sql(question)

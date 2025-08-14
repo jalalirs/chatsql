@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ModelDetail } from '../../types/models';
-import { archiveModel, activateModel, duplicateModel, deleteModel } from '../../services/models';
+import { archiveModel, duplicateModel, deleteModel } from '../../services/models';
 
 interface ModelHeaderProps {
   model: ModelDetail;
@@ -28,22 +28,7 @@ const ModelHeader: React.FC<ModelHeaderProps> = ({ model, onModelUpdate, onBack 
     }
   };
 
-  const handleActivate = async () => {
-    try {
-      setLoading(true);
-      await activateModel(model.id);
-      // Activate operation returns boolean, so we need to reload the model
-      // For now, we'll just update the status locally
-      onModelUpdate({
-        ...model,
-        status: 'active' as any
-      });
-    } catch (error) {
-      console.error('Failed to activate model:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+
 
   const handleDuplicate = async () => {
     try {
@@ -77,6 +62,8 @@ const ModelHeader: React.FC<ModelHeaderProps> = ({ model, onModelUpdate, onBack 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active':
+        return 'bg-green-100 text-green-800';
+      case 'trained':
         return 'bg-green-100 text-green-800';
       case 'archived':
         return 'bg-gray-100 text-gray-800';
@@ -118,21 +105,13 @@ const ModelHeader: React.FC<ModelHeaderProps> = ({ model, onModelUpdate, onBack 
           </div>
 
           <div className="flex items-center space-x-3">
-            {model.status === 'active' ? (
+            {(model.status === 'active' || model.status === 'trained') && (
               <button
                 onClick={handleArchive}
                 disabled={loading}
                 className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
               >
                 Archive
-              </button>
-            ) : (
-              <button
-                onClick={handleActivate}
-                disabled={loading}
-                className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-              >
-                Activate
               </button>
             )}
 

@@ -207,24 +207,7 @@ class ModelService:
         
         return True
     
-    async def activate_model(self, model_id: UUID, user_id: UUID) -> bool:
-        """Activate a model"""
-        stmt = select(Model).where(
-            and_(
-                Model.id == model_id,
-                Model.user_id == user_id
-            )
-        )
-        result = await self.db.execute(stmt)
-        model = result.scalar_one_or_none()
-        
-        if not model:
-            return False
-        
-        model.status = ModelStatus.ACTIVE
-        await self.db.commit()
-        
-        return True
+
     
     async def duplicate_model(self, model_id: UUID, user_id: UUID, new_name: str) -> Optional[ModelResponse]:
         """Duplicate a model with all its configuration"""

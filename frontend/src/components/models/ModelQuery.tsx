@@ -67,14 +67,14 @@ const ModelQuery: React.FC<ModelQueryProps> = ({ model }) => {
                 rows={3}
                 className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                 placeholder="e.g., Show me all users who signed up in the last month"
-                disabled={loading || model.status !== 'active'}
+                disabled={loading || model.status !== 'trained'}
               />
             </div>
             
             <div className="flex space-x-3">
               <button
                 type="submit"
-                disabled={!query.trim() || loading || model.status !== 'active'}
+                disabled={!query.trim() || loading || model.status !== 'trained'}
                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
               >
                 {loading ? (
@@ -99,7 +99,7 @@ const ModelQuery: React.FC<ModelQueryProps> = ({ model }) => {
               </button>
             </div>
 
-            {model.status !== 'active' && (
+            {model.status !== 'trained' && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
                 <div className="flex">
                   <div className="flex-shrink-0">
@@ -139,7 +139,7 @@ const ModelQuery: React.FC<ModelQueryProps> = ({ model }) => {
               <button
                 key={index}
                 onClick={() => setQuery(sampleQuery)}
-                disabled={loading || model.status !== 'active'}
+                disabled={loading || model.status !== 'trained'}
                 className="text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
               >
                 <p className="text-sm text-gray-900">{sampleQuery}</p>
