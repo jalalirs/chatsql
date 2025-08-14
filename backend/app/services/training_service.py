@@ -5,7 +5,7 @@ import asyncio
 import pyodbc
 from typing import Optional, List, Dict, Any, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, and_
 from datetime import datetime
 import logging
 import openai
@@ -20,14 +20,15 @@ from app.models.schemas import (
     ModelTrainingDocumentationCreate, ModelTrainingDocumentationUpdate, ModelTrainingDocumentationResponse,
     ModelTrainingQuestionCreate, ModelTrainingQuestionUpdate, ModelTrainingQuestionResponse,
     ModelTrainingColumnCreate, ModelTrainingColumnUpdate, ModelTrainingColumnResponse,
-    ModelStatus
+    ModelStatus, AIGenerationResult
 )
 from app.models.vanna_models import (
     DataGenerationConfig, TrainingConfig, GeneratedDataResult, 
-    TrainingResult, VannaTrainingData, TrainingDocumentation as VannaTrainingDoc, 
+    VannaTrainingData, TrainingDocumentation as VannaTrainingDoc, 
     TrainingExample as VannaTrainingExample, MSSQLConstants
 )
 from app.services.connection_service import connection_service
+from app.services.vanna_service import vanna_service
 from app.core.sse_manager import sse_manager
 from app.utils.sse_utils import SSELogger
 from app.config import settings
@@ -172,6 +173,521 @@ class TrainingService:
                 error_message=error_msg,
                 model_id=model_id
             )
+    
+    async def generate_column_descriptions(
+        self,
+        db: AsyncSession,
+        user: User,
+        model_id: str,
+        scope: str,
+        table_name: Optional[str] = None,
+        column_name: Optional[str] = None
+    ) -> AIGenerationResult:
+        """Generate AI descriptions for columns at different scopes"""
+        try:
+            # Get model and verify ownership
+            model = await self._get_model_and_verify_ownership(db, model_id, user)
+            if not model:
+                return AIGenerationResult(
+                    success=False,
+                    generated_count=0,
+                    error_message=f"Model {model_id} not found or access denied"
+                )
+            
+            # Get connection for database access
+            connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
+            if not connection:
+                return AIGenerationResult(
+                    success=False,
+                    generated_count=0,
+                    error_message=f"Connection not found for model {model_id}"
+                )
+            
+            generated_count = 0
+            
+            if scope == "column":
+                # Generate description for a specific column
+                if not table_name or not column_name:
+                    return AIGenerationResult(
+                        success=False,
+                        generated_count=0,
+                        error_message="Table name and column name are required for column scope"
+                    )
+                
+                description = await self._generate_single_column_description(
+                    db, connection, table_name, column_name
+                )
+                
+                # Update the training column record
+                await self._update_column_description(db, model_id, table_name, column_name, description)
+                generated_count = 1
+                
+            elif scope == "table":
+                # Generate descriptions for all tracked columns in a table
+                if not table_name:
+                    return AIGenerationResult(
+                        success=False,
+                        generated_count=0,
+                        error_message="Table name is required for table scope"
+                    )
+                
+                # Get tracked columns for this table
+                tracked_columns = await self._get_model_tracked_columns_for_table(db, model_id, table_name)
+                if not tracked_columns:
+                    return AIGenerationResult(
+                        success=False,
+                        generated_count=0,
+                        error_message=f"No tracked columns found for table {table_name}"
+                    )
+                
+                descriptions = await self._generate_tracked_column_descriptions(
+                    db, connection, table_name, tracked_columns
+                )
+                
+                # Update all column descriptions for the table
+                for col_name, description in descriptions.items():
+                    await self._update_column_description(db, model_id, table_name, col_name, description)
+                    generated_count += 1
+                
+            elif scope == "all":
+                # Generate descriptions for all tracked columns across all tables
+                tracked_tables = await self._get_model_tracked_tables(db, model_id)
+                
+                for table_info in tracked_tables:
+                    # Get tracked columns for this table
+                    tracked_columns = await self._get_model_tracked_columns_for_table(db, model_id, table_info.table_name)
+                    if tracked_columns:
+                        descriptions = await self._generate_tracked_column_descriptions(
+                            db, connection, table_info.table_name, tracked_columns
+                        )
+                        
+                        # Update all column descriptions for each table
+                        for col_name, description in descriptions.items():
+                            await self._update_column_description(db, model_id, table_info.table_name, col_name, description)
+                            generated_count += 1
+            
+            return AIGenerationResult(
+                success=True,
+                generated_count=generated_count,
+                error_message=None
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to generate column descriptions: {e}")
+            return AIGenerationResult(
+                success=False,
+                generated_count=0,
+                error_message=str(e)
+            )
+    
+    async def generate_table_descriptions(
+        self,
+        db: AsyncSession,
+        user: User,
+        model_id: str,
+        table_name: Optional[str] = None
+    ) -> AIGenerationResult:
+        """Generate AI descriptions for all columns in a table or all tables"""
+        try:
+            # Get model and verify ownership
+            model = await self._get_model_and_verify_ownership(db, model_id, user)
+            if not model:
+                return AIGenerationResult(
+                    success=False,
+                    generated_count=0,
+                    error_message=f"Model {model_id} not found or access denied"
+                )
+            
+            # Get connection for database access
+            connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
+            if not connection:
+                return AIGenerationResult(
+                    success=False,
+                    generated_count=0,
+                    error_message=f"Connection not found for model {model_id}"
+                )
+            
+            generated_count = 0
+            
+            if table_name:
+                # Generate descriptions for tracked columns in a specific table
+                tracked_columns = await self._get_model_tracked_columns_for_table(db, model_id, table_name)
+                if not tracked_columns:
+                    return AIGenerationResult(
+                        success=False,
+                        generated_count=0,
+                        error_message=f"No tracked columns found for table {table_name}"
+                    )
+                
+                descriptions = await self._generate_tracked_column_descriptions(
+                    db, connection, table_name, tracked_columns
+                )
+                
+                # Update all column descriptions for the table
+                for col_name, description in descriptions.items():
+                    await self._update_column_description(db, model_id, table_name, col_name, description)
+                    generated_count += 1
+            else:
+                # Generate descriptions for all tracked tables
+                tracked_tables = await self._get_model_tracked_tables(db, model_id)
+                
+                for table_info in tracked_tables:
+                    # Get tracked columns for this table
+                    tracked_columns = await self._get_model_tracked_columns_for_table(db, model_id, table_info.table_name)
+                    if tracked_columns:
+                        descriptions = await self._generate_tracked_column_descriptions(
+                            db, connection, table_info.table_name, tracked_columns
+                        )
+                        
+                        # Update all column descriptions for each table
+                        for col_name, description in descriptions.items():
+                            await self._update_column_description(db, model_id, table_info.table_name, col_name, description)
+                            generated_count += 1
+            
+            return AIGenerationResult(
+                success=True,
+                generated_count=generated_count,
+                error_message=None
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to generate table descriptions: {e}")
+            return AIGenerationResult(
+                success=False,
+                generated_count=0,
+                error_message=str(e)
+            )
+    
+    async def generate_all_descriptions(
+        self,
+        db: AsyncSession,
+        user: User,
+        model_id: str
+    ) -> AIGenerationResult:
+        """Generate AI descriptions for all tracked columns across all tables"""
+        return await self.generate_column_descriptions(
+            db=db,
+            user=user,
+            model_id=model_id,
+            scope="all"
+        )
+    
+    async def _generate_single_column_description(
+        self,
+        db: AsyncSession,
+        connection: Connection,
+        table_name: str,
+        column_name: str
+    ) -> str:
+        """Generate AI description for a single column"""
+        try:
+            client = self._get_openai_client()
+            
+            # Get column information from database schema
+            columns = await connection_service.get_table_columns(
+                db=db,
+                connection_id=str(connection.id),
+                table_name=table_name
+            )
+            
+            column_info = None
+            for col in columns:
+                if col["column_name"] == column_name:
+                    column_info = col
+                    break
+            
+            if not column_info:
+                return f"Description for {column_name} column"
+            
+            # Build prompt for column description
+            prompt = self._build_column_description_prompt(table_name, column_info)
+            
+            response = client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a database expert specializing in Microsoft SQL Server. Generate clear, concise descriptions for database columns."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=200
+            )
+            
+            description = response.choices[0].message.content.strip()
+            return description if description else f"Description for {column_name} column"
+            
+        except Exception as e:
+            logger.error(f"Failed to generate column description: {e}")
+            return f"Description for {column_name} column"
+    
+    async def _get_all_tracked_columns_for_model(self, db: AsyncSession, model_id: str) -> List[Dict[str, Any]]:
+        """Get all tracked columns for a model (only where is_tracked is true)"""
+        try:
+            # Get all tracked tables for this model
+            stmt = select(ModelTrackedTable).where(ModelTrackedTable.model_id == model_id)
+            result = await db.execute(stmt)
+            tracked_tables = result.scalars().all()
+            
+            all_tracked_columns = []
+            
+            for tracked_table in tracked_tables:
+                # Get tracked columns for this table (only where is_tracked is true)
+                stmt = select(ModelTrackedColumn).where(
+                    and_(
+                        ModelTrackedColumn.model_tracked_table_id == tracked_table.id,
+                        ModelTrackedColumn.is_tracked == True
+                    )
+                )
+                result = await db.execute(stmt)
+                tracked_columns = result.scalars().all()
+                
+                for tracked_col in tracked_columns:
+                    all_tracked_columns.append({
+                        "id": str(tracked_col.id),
+                        "table_name": tracked_table.table_name,
+                        "column_name": tracked_col.column_name,
+                        "data_type": "Unknown",  # ModelTrackedColumn doesn't store this
+                        "description": tracked_col.description,
+                        "value_range": None,  # ModelTrackedColumn doesn't store this
+                        "created_at": tracked_col.created_at.isoformat() if tracked_col.created_at else None
+                    })
+            
+            return all_tracked_columns
+        except Exception as e:
+            logger.error(f"Failed to get tracked columns for model: {e}")
+            return []
+
+    async def _get_model_tracked_columns_for_table(self, db: AsyncSession, model_id: str, table_name: str) -> List[Dict[str, Any]]:
+        """Get tracked columns for a specific table in a model"""
+        try:
+            # First find the tracked table for this model and table name
+            stmt = select(ModelTrackedTable).where(
+                ModelTrackedTable.model_id == model_id,
+                ModelTrackedTable.table_name == table_name
+            )
+            result = await db.execute(stmt)
+            tracked_table = result.scalar_one_or_none()
+            
+            if not tracked_table:
+                logger.error(f"Tracked table not found for model {model_id}, table {table_name}")
+                return []
+            
+            # Now get the tracked columns for this table (only where is_tracked is true)
+            stmt = select(ModelTrackedColumn).where(
+                and_(
+                    ModelTrackedColumn.model_tracked_table_id == tracked_table.id,
+                    ModelTrackedColumn.is_tracked == True
+                )
+            )
+            result = await db.execute(stmt)
+            tracked_columns = result.scalars().all()
+            
+            # Convert to dictionary format for consistency
+            columns = []
+            for col in tracked_columns:
+                columns.append({
+                    'column_name': col.column_name,
+                    'data_type': 'Unknown',  # ModelTrackedColumn doesn't have data_type
+                    'is_nullable': True,     # ModelTrackedColumn doesn't have is_nullable
+                    'description': col.description or ''
+                })
+            
+            return columns
+            
+        except Exception as e:
+            logger.error(f"Failed to get tracked columns for table {table_name}: {e}")
+            return []
+
+    async def _generate_tracked_column_descriptions(
+        self,
+        db: AsyncSession,
+        connection: Connection,
+        table_name: str,
+        tracked_columns: List[Dict[str, Any]]
+    ) -> Dict[str, str]:
+        """Generate AI descriptions for tracked columns in a table"""
+        try:
+            client = self._get_openai_client()
+            
+            if not tracked_columns:
+                return {}
+            
+            # Build prompt for tracked column descriptions
+            prompt = self._build_table_column_descriptions_prompt(table_name, tracked_columns)
+            
+            response = client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a database expert specializing in Microsoft SQL Server. Generate clear, concise descriptions for database columns."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            # Parse the response to get descriptions for each column
+            descriptions = self._parse_column_descriptions_response(response.choices[0].message.content, tracked_columns)
+            return descriptions
+            
+        except Exception as e:
+            logger.error(f"Failed to generate tracked column descriptions: {e}")
+            return {}
+
+    async def _generate_table_column_descriptions(
+        self,
+        db: AsyncSession,
+        connection: Connection,
+        table_name: str
+    ) -> Dict[str, str]:
+        """Generate AI descriptions for all columns in a table"""
+        try:
+            client = self._get_openai_client()
+            
+            # Get all columns for the table
+            columns = await connection_service.get_table_columns(
+                db=db,
+                connection_id=str(connection.id),
+                table_name=table_name
+            )
+            
+            if not columns:
+                return {}
+            
+            # Build prompt for table column descriptions
+            prompt = self._build_table_column_descriptions_prompt(table_name, columns)
+            
+            response = client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a database expert specializing in Microsoft SQL Server. Generate clear, concise descriptions for database columns."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            # Parse the response to get descriptions for each column
+            descriptions = self._parse_column_descriptions_response(response.choices[0].message.content, columns)
+            return descriptions
+            
+        except Exception as e:
+            logger.error(f"Failed to generate table column descriptions: {e}")
+            return {}
+    
+    def _build_column_description_prompt(self, table_name: str, column_info: Dict[str, Any]) -> str:
+        """Build prompt for single column description generation"""
+        return f"""Generate a clear, concise description for the following database column:
+
+Table: {table_name}
+Column: {column_info['column_name']}
+Data Type: {column_info['data_type']}
+Nullable: {column_info.get('is_nullable', 'Unknown')}
+
+Guidelines:
+- Be concise but informative (1-2 sentences max)
+- Explain what the column represents in business terms
+- Mention data type if relevant to understanding
+- Use clear, professional language
+
+Generate only the description, no additional text:"""
+    
+    def _build_table_column_descriptions_prompt(self, table_name: str, columns: List[Dict[str, Any]]) -> str:
+        """Build prompt for table column descriptions generation"""
+        columns_text = "\n".join([
+            f"- {col['column_name']} ({col['data_type']}) - Nullable: {col.get('is_nullable', 'Unknown')}"
+            for col in columns
+        ])
+        
+        return f"""Generate clear, concise descriptions for all columns in the table: {table_name}
+
+Table columns:
+{columns_text}
+
+Guidelines:
+- Be concise but informative (1-2 sentences max per column)
+- Explain what each column represents in business terms
+- Mention data type if relevant to understanding
+- Use clear, professional language
+
+Format your response as:
+Column: [column_name]
+Description: [description]
+
+Generate descriptions for all columns:"""
+    
+    def _parse_column_descriptions_response(self, response: str, columns: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Parse AI response to extract column descriptions"""
+        descriptions = {}
+        lines = response.strip().split('\n')
+        
+        current_column = None
+        current_description = None
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith('Column:'):
+                # Save previous description if exists
+                if current_column and current_description:
+                    descriptions[current_column] = current_description
+                
+                current_column = line.replace('Column:', '').strip()
+                current_description = None
+                
+            elif line.startswith('Description:'):
+                current_description = line.replace('Description:', '').strip()
+        
+        # Add last description
+        if current_column and current_description:
+            descriptions[current_column] = current_description
+        
+        # Ensure all columns have descriptions (fallback)
+        for col in columns:
+            col_name = col['column_name']
+            if col_name not in descriptions:
+                descriptions[col_name] = f"Description for {col_name} column"
+        
+        return descriptions
+    
+    async def _update_column_description(
+        self,
+        db: AsyncSession,
+        model_id: str,
+        table_name: str,
+        column_name: str,
+        description: str
+    ):
+        """Update tracked column description with AI-generated description"""
+        try:
+            # Find the tracked table for this model and table name
+            stmt = select(ModelTrackedTable).where(
+                ModelTrackedTable.model_id == model_id,
+                ModelTrackedTable.table_name == table_name
+            )
+            result = await db.execute(stmt)
+            tracked_table = result.scalar_one_or_none()
+            
+            if not tracked_table:
+                logger.error(f"Tracked table not found for model {model_id}, table {table_name}")
+                return
+            
+            # Find the tracked column
+            stmt = select(ModelTrackedColumn).where(
+                ModelTrackedColumn.model_tracked_table_id == tracked_table.id,
+                ModelTrackedColumn.column_name == column_name
+            )
+            result = await db.execute(stmt)
+            tracked_column = result.scalar_one_or_none()
+            
+            if tracked_column:
+                # Update the tracked column description
+                tracked_column.description = description
+                await db.commit()
+                logger.info(f"Updated description for column {column_name} in table {table_name}")
+            else:
+                logger.error(f"Tracked column not found: {column_name} in table {table_name}")
+            
+        except Exception as e:
+            logger.error(f"Failed to update column description: {e}")
+            await db.rollback()
     
     async def _get_model_and_verify_ownership(self, db: AsyncSession, model_id: str, user: User) -> Optional[Model]:
         """Get model and verify user ownership"""
@@ -881,8 +1397,8 @@ Generate exactly {num_examples} examples:"""
             # Get training documentation
             documentation = await self.get_model_training_documentation(db, model_id)
             
-            # Get training columns
-            columns = await self.get_model_training_columns(db, model_id)
+            # Get tracked columns (only tracked ones)
+            columns = await self._get_all_tracked_columns_for_model(db, model_id)
             
             return {
                 "model_id": str(model_id),
@@ -907,17 +1423,7 @@ Generate exactly {num_examples} examples:"""
                         "created_at": d.created_at.isoformat() if d.created_at else None
                     } for d in documentation
                 ],
-                "columns": [
-                    {
-                        "id": c.id,
-                        "table_name": c.table_name,
-                        "column_name": c.column_name,
-                        "data_type": c.data_type,
-                        "description": c.description,
-                        "value_range": c.value_range,
-                        "created_at": c.created_at.isoformat() if c.created_at else None
-                    } for c in columns
-                ],
+                "columns": columns,
                 "total_questions": len(questions),
                 "total_documentation": len(documentation),
                 "total_columns": len(columns)
@@ -975,26 +1481,26 @@ Generate exactly {num_examples} examples:"""
                 )
                 await db.execute(stmt)
                 await db.commit()
-            
-            return {
-                "success": True,
-                "model_id": model_id,
-                "total_generated": result.total_generated,
-                "failed_count": result.failed_count
-            }
-        else:
-            # Update model status back to draft
-            stmt = update(Model).where(Model.id == model_id).values(
-                status=ModelStatus.DRAFT,
-                updated_at=datetime.utcnow()
-            )
-            await db.execute(stmt)
-            await db.commit()
-            
-            return {
-                "success": False,
-                "error": result.error_message
-            }
+                
+                return {
+                    "success": True,
+                    "model_id": model_id,
+                    "total_generated": result.total_generated,
+                    "failed_count": result.failed_count
+                }
+            else:
+                # Update model status back to draft
+                stmt = update(Model).where(Model.id == model_id).values(
+                    status=ModelStatus.DRAFT,
+                    updated_at=datetime.utcnow()
+                )
+                await db.execute(stmt)
+                await db.commit()
+                
+                return {
+                    "success": False,
+                    "error": result.error_message
+                }
             
         except Exception as e:
             # Update model status back to draft on error

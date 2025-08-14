@@ -57,7 +57,9 @@ export const modelService = {
   // Tracked tables management
   async addTrackedTable(modelId: string, tableName: string): Promise<ModelTrackedTable> {
     const response = await api.post(`/models/${modelId}/tracked-tables`, {
-      table_name: tableName
+      table_name: tableName,
+      schema_name: null,
+      is_active: true
     });
     return response.data;
   },
@@ -73,14 +75,16 @@ export const modelService = {
   },
 
   async updateTrackedColumns(modelId: string, tableId: string, columns: ModelTrackedColumn[]): Promise<ModelTrackedColumn[]> {
-    const response = await api.put(`/models/${modelId}/tracked-tables/${tableId}/columns`, {
-      columns: columns.map(col => ({
-        column_name: col.column_name,
-        column_type: col.column_type,
-        column_description: col.column_description,
-        is_tracked: col.is_tracked
-      }))
-    });
+    const response = await api.put(`/models/${modelId}/tracked-tables/${tableId}/columns`, columns.map(col => ({
+      column_name: col.column_name,
+      is_tracked: col.is_tracked,
+      description: col.description
+    })));
+    return response.data;
+  },
+
+  async getModelTrackedColumns(modelId: string, tableId: string): Promise<ModelTrackedColumn[]> {
+    const response = await api.get(`/models/${modelId}/tracked-tables/${tableId}/columns`);
     return response.data;
   }
 };
@@ -98,3 +102,4 @@ export const addTrackedTable = modelService.addTrackedTable;
 export const getModelTrackedTables = modelService.getTrackedTables;
 export const removeTrackedTable = modelService.removeTrackedTable;
 export const updateTrackedColumns = modelService.updateTrackedColumns;
+export const getModelTrackedColumns = modelService.getModelTrackedColumns;

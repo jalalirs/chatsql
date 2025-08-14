@@ -8,7 +8,7 @@ from app.core.database import create_tables, close_database
 from app.core.sse_manager import sse_manager
 from app.api import (
     authentication, user, events, connections, 
-    conversation, health, models
+    conversation, health, models, training
 )
 
 # Configure logging
@@ -73,7 +73,7 @@ app.include_router(user.router)
 app.include_router(connections.router)
 app.include_router(models.router)
 app.include_router(conversation.router)
-# app.include_router(training.router)  # Temporarily disabled due to syntax errors
+app.include_router(training.router)  # Enable training endpoints
 
 # System routes
 app.include_router(events.router)

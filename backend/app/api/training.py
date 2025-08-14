@@ -340,3 +340,103 @@ async def delete_training_column(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete training column: {str(e)}")
+
+# AI Generation Endpoints
+@router.post("/models/{model_id}/generate-column-descriptions")
+async def generate_column_descriptions(
+    model_id: UUID = Path(..., description="Model ID"),
+    scope: str = Query("all", description="Scope: 'column', 'table', or 'all'"),
+    table_name: Optional[str] = Query(None, description="Table name (required if scope is 'table')"),
+    column_name: Optional[str] = Query(None, description="Column name (required if scope is 'column')"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Generate AI descriptions for columns at different scopes"""
+    try:
+        if scope == "column" and not column_name:
+            raise HTTPException(status_code=400, detail="Column name is required for column scope")
+        if scope == "table" and not table_name:
+            raise HTTPException(status_code=400, detail="Table name is required for table scope")
+        
+        result = await training_service.generate_column_descriptions(
+            db=db,
+            user=current_user,
+            model_id=str(model_id),
+            scope=scope,
+            table_name=table_name,
+            column_name=column_name
+        )
+        
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error_message)
+        
+        return {
+            "success": True,
+            "model_id": str(model_id),
+            "scope": scope,
+            "generated_count": result.generated_count,
+            "message": f"Generated {result.generated_count} column descriptions"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate column descriptions: {str(e)}")
+
+@router.post("/models/{model_id}/generate-table-descriptions")
+async def generate_table_descriptions(
+    model_id: UUID = Path(..., description="Model ID"),
+    table_name: Optional[str] = Query(None, description="Specific table name (optional)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Generate AI descriptions for all columns in a table or all tables"""
+    try:
+        result = await training_service.generate_table_descriptions(
+            db=db,
+            user=current_user,
+            model_id=str(model_id),
+            table_name=table_name
+        )
+        
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error_message)
+        
+        return {
+            "success": True,
+            "model_id": str(model_id),
+            "table_name": table_name,
+            "generated_count": result.generated_count,
+            "message": f"Generated {result.generated_count} table descriptions"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate table descriptions: {str(e)}")
+
+@router.post("/models/{model_id}/generate-all-descriptions")
+async def generate_all_descriptions(
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Generate AI descriptions for all tracked columns across all tables"""
+    try:
+        result = await training_service.generate_all_descriptions(
+            db=db,
+            user=current_user,
+            model_id=str(model_id)
+        )
+        
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error_message)
+        
+        return {
+            "success": True,
+            "model_id": str(model_id),
+            "generated_count": result.generated_count,
+            "message": f"Generated {result.generated_count} descriptions across all tables"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate all descriptions: {str(e)}")

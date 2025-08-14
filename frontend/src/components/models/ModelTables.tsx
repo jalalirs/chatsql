@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ModelDetail, ModelTrackedTable, ModelTrackedColumn } from '../../types/models';
-import { getModelTrackedTables, addTrackedTable, removeTrackedTable, updateTrackedColumns } from '../../services/models';
+import { getModelTrackedTables, addTrackedTable, removeTrackedTable, updateTrackedColumns, getModelTrackedColumns } from '../../services/models';
 import { getConnectionTables, getTableColumns } from '../../services/connections';
 
 interface ModelTablesProps {
@@ -30,10 +30,31 @@ const ModelTables: React.FC<ModelTablesProps> = ({ model, onModelUpdate }) => {
       // Load columns for each tracked table
       for (const table of tables) {
         try {
-          const columns = await getTableColumns(model.connection_id, table.table_name);
+          // Load database schema columns
+          const schemaColumns = await getTableColumns(model.connection_id, table.table_name);
+          
+          // Load existing tracked columns from backend
+          let trackedColumns: ModelTrackedColumn[] = [];
+          try {
+            trackedColumns = await getModelTrackedColumns(model.id, table.id);
+          } catch (error) {
+            console.error('❌ Failed to load tracked columns:', error);
+            // Continue with empty array
+          }
+          
+          // Merge schema columns with existing tracking information
+          const mergedColumns = schemaColumns.map(schemaCol => {
+            const trackedCol = trackedColumns.find(tc => tc.column_name === schemaCol.column_name);
+            return {
+              ...schemaCol,
+              is_tracked: trackedCol ? trackedCol.is_tracked : false,
+              description: trackedCol?.description || ''
+            };
+          });
+          
           setTableColumns(prev => ({
             ...prev,
-            [table.id]: columns
+            [table.id]: mergedColumns
           }));
         } catch (error) {
           console.error(`Failed to load columns for table ${table.table_name}:`, error);
@@ -83,10 +104,40 @@ const ModelTables: React.FC<ModelTablesProps> = ({ model, onModelUpdate }) => {
     }
   };
 
-  const handleToggleColumns = async (tableId: string, columns: ModelTrackedColumn[]) => {
+  const handleToggleColumns = async (tableId: string, columns: any[]) => {
     try {
-      await updateTrackedColumns(model.id, tableId, columns);
-      await loadTrackedTables();
+      
+      // Get the current tracked columns from the backend
+      const currentTrackedColumns = await getModelTrackedColumns(model.id, tableId);
+      
+      // Create a map of existing tracked columns by column name
+      const trackedColumnsMap = new Map(
+        currentTrackedColumns.map(col => [col.column_name, col])
+      );
+      
+      // Update the tracked columns based on the current state
+      const updatedTrackedColumns = columns.map(col => {
+        const existingCol = trackedColumnsMap.get(col.column_name);
+        return {
+          id: existingCol?.id || '',
+          model_tracked_table_id: existingCol?.model_tracked_table_id || tableId,
+          column_name: col.column_name,
+          is_tracked: col.is_tracked || false,
+          description: col.description || '',
+          created_at: existingCol?.created_at || new Date().toISOString()
+        };
+      });
+      
+      // Try to sync with the server
+      try {
+        await updateTrackedColumns(model.id, tableId, updatedTrackedColumns);
+      } catch (error) {
+        console.error('❌ Failed to update tracked columns on server:', error);
+        // Continue anyway - the local state is already updated
+      }
+      
+      // Don't reload tracked tables - keep the local state
+      // await loadTrackedTables();
     } catch (error) {
       console.error('Failed to update tracked columns:', error);
     }
@@ -94,7 +145,8 @@ const ModelTables: React.FC<ModelTablesProps> = ({ model, onModelUpdate }) => {
 
   const getUnusedTables = () => {
     const trackedTableNames = trackedTables.map(t => t.table_name);
-    return availableTables.filter(table => !trackedTableNames.includes(table));
+    const unused = availableTables.filter(table => !trackedTableNames.includes(table));
+    return unused;
   };
 
   if (loading) {
@@ -199,6 +251,21 @@ const ModelTables: React.FC<ModelTablesProps> = ({ model, onModelUpdate }) => {
                       table={table}
                       columns={tableColumns[table.id] || []}
                       onUpdateColumns={(columns) => handleToggleColumns(table.id, columns)}
+                      onColumnToggle={(columnName, track) => {
+                        // Update local state immediately
+                        const updatedColumns = (tableColumns[table.id] || []).map(col => ({
+                          ...col,
+                          is_tracked: col.column_name === columnName ? track : (col.is_tracked || false)
+                        }));
+                        
+                        setTableColumns(prev => ({
+                          ...prev,
+                          [table.id]: updatedColumns
+                        }));
+                        
+                        // Then sync with server
+                        handleToggleColumns(table.id, updatedColumns);
+                      }}
                     />
                   </div>
                 )}
@@ -216,42 +283,82 @@ interface TableColumnsManagerProps {
   table: ModelTrackedTable;
   columns: any[];
   onUpdateColumns: (columns: ModelTrackedColumn[]) => void;
+  onColumnToggle: (columnName: string, track: boolean) => void;
 }
 
-const TableColumnsManager: React.FC<TableColumnsManagerProps> = ({ table, columns, onUpdateColumns }) => {
-  const handleColumnToggle = (columnId: string) => {
-    const currentTracked = columns.filter(c => c.is_tracked).map(c => c.id) || [];
-    const newTracked = currentTracked.includes(columnId)
-      ? currentTracked.filter(id => id !== columnId)
-      : [...currentTracked, columnId];
+const TableColumnsManager: React.FC<TableColumnsManagerProps> = ({ table, columns, onUpdateColumns, onColumnToggle }) => {
+  
+  const handleTrackColumn = (columnName: string, track: boolean) => {
     
-    const updatedColumns = columns.map(col => ({
-      ...col,
-      is_tracked: newTracked.includes(col.id)
-    })) || [];
-    
-    onUpdateColumns(updatedColumns);
+    // Call the parent handler to update local state and sync with server
+    onColumnToggle(columnName, track);
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-4">
       <h5 className="text-sm font-medium text-gray-700">Tracked Columns</h5>
-      <div className="space-y-1">
-        {columns.map((column) => {
-          const isTracked = column.is_tracked;
-          return (
-            <label key={column.id} className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                checked={isTracked}
-                onChange={() => handleColumnToggle(column.id)}
-                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-              />
-              <span className="text-sm text-gray-900">{column.name}</span>
-              <span className="text-xs text-gray-500">({column.data_type})</span>
-            </label>
-          );
-        })}
+      
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Column Name
+              </th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Data Type
+              </th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Nullable
+              </th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Status
+              </th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Action
+              </th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {columns.map((column) => {
+              const isTracked = column.is_tracked || false;
+              return (
+                <tr key={column.column_name} className="hover:bg-gray-50">
+                  <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
+                    {column.column_name}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    {column.data_type}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    {column.is_nullable ? 'Yes' : 'No'}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      isTracked 
+                        ? 'bg-green-100 text-green-800' 
+                        : 'bg-gray-100 text-gray-800'
+                    }`}>
+                      {isTracked ? 'Tracked' : 'Not Tracked'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    <button
+                      onClick={() => handleTrackColumn(column.column_name, !isTracked)}
+                      className={`inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                        isTracked
+                          ? 'text-red-700 bg-red-100 hover:bg-red-200 focus:ring-red-500'
+                          : 'text-green-700 bg-green-100 hover:bg-green-200 focus:ring-green-500'
+                      }`}
+                    >
+                      {isTracked ? 'Untrack' : 'Track'}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

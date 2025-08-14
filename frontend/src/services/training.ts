@@ -122,6 +122,30 @@ export const trainingService = {
   async deleteColumn(columnId: string): Promise<{success: boolean, message: string}> {
     const response = await api.delete(`/training/columns/${columnId}`);
     return response.data;
+  },
+
+  // AI Generation methods
+  async generateColumnDescriptions(modelId: string, scope: 'column' | 'table' | 'all', tableName?: string, columnName?: string): Promise<{success: boolean, generated_count: number, message: string}> {
+    const params = new URLSearchParams();
+    params.append('scope', scope);
+    if (tableName) params.append('table_name', tableName);
+    if (columnName) params.append('column_name', columnName);
+    
+    const response = await api.post(`/training/models/${modelId}/generate-column-descriptions?${params.toString()}`);
+    return response.data;
+  },
+
+  async generateTableDescriptions(modelId: string, tableName?: string): Promise<{success: boolean, generated_count: number, message: string}> {
+    const params = new URLSearchParams();
+    if (tableName) params.append('table_name', tableName);
+    
+    const response = await api.post(`/training/models/${modelId}/generate-table-descriptions?${params.toString()}`);
+    return response.data;
+  },
+
+  async generateAllDescriptions(modelId: string): Promise<{success: boolean, generated_count: number, message: string}> {
+    const response = await api.post(`/training/models/${modelId}/generate-all-descriptions`);
+    return response.data;
   }
 };
 
@@ -144,3 +168,6 @@ export const getColumns = trainingService.getColumns;
 export const createColumn = trainingService.createColumn;
 export const updateColumn = trainingService.updateColumn;
 export const deleteColumn = trainingService.deleteColumn;
+export const generateColumnDescriptions = trainingService.generateColumnDescriptions;
+export const generateTableDescriptions = trainingService.generateTableDescriptions;
+export const generateAllDescriptions = trainingService.generateAllDescriptions;

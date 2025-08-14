@@ -27,11 +27,10 @@ export interface ModelTrackedTable {
 
 export interface ModelTrackedColumn {
   id: string;
-  tracked_table_id: string;
+  model_tracked_table_id: string;
   column_name: string;
-  column_type: string;
-  column_description?: string;
   is_tracked: boolean;
+  description?: string;
   created_at: string;
 }
 
@@ -142,14 +141,14 @@ export interface QuestionUpdateRequest {
 export interface ColumnCreateRequest {
   table_name: string;
   column_name: string;
-  column_type: string;
+  data_type: string;
   description: string;
 }
 
 export interface ColumnUpdateRequest {
   table_name?: string;
   column_name?: string;
-  column_type?: string;
+  data_type?: string;
   description?: string;
   is_active?: boolean;
 }

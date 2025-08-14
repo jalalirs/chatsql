@@ -696,3 +696,17 @@ class ModelStatusUpdateRequest(BaseModel):
 class ModelStatusUpdateResponse(BaseModel):
     model: ModelResponse
     message: str
+
+# AI Generation Response Schemas
+class AIGenerationResult(BaseModel):
+    success: bool
+    generated_count: int
+    error_message: Optional[str] = None
+
+class ColumnDescriptionGenerationRequest(BaseModel):
+    scope: str = Field(..., description="Scope: 'column', 'table', or 'all'")
+    table_name: Optional[str] = None
+    column_name: Optional[str] = None
+
+class TableDescriptionGenerationRequest(BaseModel):
+    table_name: Optional[str] = None
