@@ -237,6 +237,14 @@ class VannaService:
             if progress_callback:
                 await progress_callback(40, "Loading training data...")
             
+            # Clear old training data from ChromaDB to ensure fresh training
+            try:
+                vanna_instance.clear_training_data()
+                logger.info("Cleared old training data from ChromaDB")
+            except Exception as e:
+                logger.error(f"Failed to clear training data: {e}")
+                # Continue with training even if clearing fails
+            
             # Get training data for this model
             from app.services.training_service import training_service
             
@@ -312,6 +320,63 @@ class VannaService:
                 except Exception as e:
                     logger.error(f"Failed to train column description {col_desc['column_name']}: {e}")
             
+            # Train with database schema (DDL) - CRITICAL MISSING STEP!
+            if db:
+                try:
+                    # Get the model's tracked tables and columns directly
+                    from app.models.database import Model, ModelTrackedTable, ModelTrackedColumn
+                    from sqlalchemy import select
+                    
+                    # Get tracked tables for this model
+                    tables_result = await db.execute(
+                        select(ModelTrackedTable)
+                        .where(ModelTrackedTable.model_id == model_id, ModelTrackedTable.is_active == True)
+                    )
+                    tracked_tables = tables_result.scalars().all()
+                    
+                    if tracked_tables:
+                        logger.info(f"Training with {len(tracked_tables)} tracked tables")
+                        
+                        for tracked_table in tracked_tables:
+                            try:
+                                # Get columns for this table
+                                columns_result = await db.execute(
+                                    select(ModelTrackedColumn)
+                                    .where(ModelTrackedColumn.model_tracked_table_id == tracked_table.id)
+                                )
+                                tracked_columns = columns_result.scalars().all()
+                                
+                                # Create DDL-like documentation for the table
+                                columns_info = []
+                                for col in tracked_columns:
+                                    if col.is_tracked:
+                                        col_info = f"[{col.column_name}]"
+                                        if col.value_data_type:
+                                            col_info += f" ({col.value_data_type})"
+                                        if col.description:
+                                            col_info += f" - {col.description}"
+                                        columns_info.append(col_info)
+                                
+                                if columns_info:
+                                    # Create table DDL documentation
+                                    full_table_name = f"{tracked_table.schema_name}.{tracked_table.table_name}" if tracked_table.schema_name else tracked_table.table_name
+                                    ddl_doc = f"Table {full_table_name}:\n" + "\n".join(columns_info)
+                                    
+                                    # Train with this table's DDL
+                                    vanna_instance.train(documentation=ddl_doc)
+                                    logger.info(f"Trained DDL for table: {full_table_name}")
+                                
+                            except Exception as e:
+                                logger.error(f"Failed to train DDL for table {tracked_table.table_name}: {e}")
+                    else:
+                        logger.warning(f"No tracked tables found for model {model_id}")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to train database schema (DDL): {e}")
+                    # Don't fail training if DDL training fails, just log it
+            else:
+                logger.warning("No database session available for DDL training")
+            
             if progress_callback:
                 await progress_callback(100, "Training completed successfully")
             
@@ -355,7 +420,8 @@ class VannaService:
             # Get model's connection for database access
             if db:
                 from app.services.connection_service import connection_service
-                model = await db.execute(select(Model).where(Model.id == model_id)).scalar_one_or_none()
+                result = await db.execute(select(Model).where(Model.id == model_id))
+                model = result.scalar_one_or_none()
                 if model:
                     connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
                     if connection:

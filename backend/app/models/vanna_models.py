@@ -107,9 +107,13 @@ class TrainingConfig(BaseModel):
 
 class ChartResponse(BaseModel):
     """Response for chart generation"""
-    chart_type: str
-    data: Dict[str, Any]
+    should_generate: bool
+    chart_type: Optional[str] = None
+    chart_code: Optional[str] = None
+    chart_figure: Optional[Dict[str, Any]] = None
+    data: Optional[Dict[str, Any]] = None
     config: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
 
 # MS SQL Server specific constants and templates
 class MSSQLConstants:

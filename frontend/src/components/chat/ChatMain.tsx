@@ -344,6 +344,54 @@ export const ChatMain: React.FC<ChatMainProps> = ({
             }
           });
           
+          eventSource.addEventListener('sql_execution_failed', (event) => {
+            console.log('❌ SQL execution failed event:', event.data);
+            try {
+              const data = JSON.parse(event.data);
+              setMessages(prev => prev.map(msg => 
+                msg.id === aiMessageId 
+                  ? { 
+                      ...msg, 
+                      content: `SQL execution failed: ${data.error}`,
+                      sql: data.sql
+                    }
+                  : msg
+              ));
+              setLoading(false);
+            } catch (e) {
+              console.error('Error in sql_execution_failed:', e);
+            }
+          });
+          
+          eventSource.addEventListener('no_data', (event) => {
+            console.log('📭 No data event:', event.data);
+            try {
+              const data = JSON.parse(event.data);
+              setMessages(prev => prev.map(msg => 
+                msg.id === aiMessageId 
+                  ? { 
+                      ...msg, 
+                      content: data.message || "Query executed successfully but returned no data."
+                    }
+                  : msg
+              ));
+              setLoading(false);
+            } catch (e) {
+              console.error('Error in no_data:', e);
+            }
+          });
+          
+          eventSource.addEventListener('query_completed', (event) => {
+            console.log('✅ Query completed event:', event.data);
+            try {
+              const data = JSON.parse(event.data);
+              setLoading(false);
+              // The message content should already be updated by other events
+            } catch (e) {
+              console.error('Error in query_completed:', e);
+            }
+          });
+          
           eventSource.addEventListener('chart_generated', (event) => { // Keep this one
             console.log('📈 Chart generated event:', event.data);
             try {
@@ -539,7 +587,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
         {loadingMessages ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-gray-500">Loading conversation...</div>
