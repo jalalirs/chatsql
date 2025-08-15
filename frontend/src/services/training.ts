@@ -189,6 +189,25 @@ export const trainingService = {
     }
   },
 
+  // Generate SQL from Questions
+  async generateSqlFromQuestions(modelId: string, questions: string[], scope?: {tables: string[], columns: {[table: string]: string[]}}): Promise<{
+    success: boolean;
+    generated_sql: Array<{question: string, sql: string, error?: string}>;
+    message: string;
+  }> {
+    try {
+      const request = {
+        questions,
+        scope
+      };
+      const response = await api.post(`/training/models/${modelId}/generate-sql`, request);
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to generate SQL from questions:', error);
+      throw error;
+    }
+  },
+
   // Enhanced Question Generation with SSE
   async generateEnhancedQuestions(
     modelId: string, 
@@ -265,4 +284,5 @@ export const generateTableDescriptions = trainingService.generateTableDescriptio
 export const generateAllDescriptions = trainingService.generateAllDescriptions;
 export const generateAllDescriptionsSSE = trainingService.generateAllDescriptionsSSE;
 export const generateEnhancedQuestions = trainingService.generateEnhancedQuestions;
+export const generateSqlFromQuestions = trainingService.generateSqlFromQuestions;
 export const validateQuestion = trainingService.validateQuestion;

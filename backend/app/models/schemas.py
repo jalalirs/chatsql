@@ -667,7 +667,7 @@ class ModelDetailResponse(ModelResponse):
     tracked_tables: List[ModelTrackedTableResponse] = []
     training_documentation: List[ModelTrainingDocumentationResponse] = []
     training_questions: List[ModelTrainingQuestionResponse] = []
-    training_columns: List[ModelTrainingColumnResponse] = []
+    tracked_columns: List[ModelTrackedColumnResponse] = []
     
     class Config:
         from_attributes = True
@@ -748,5 +748,16 @@ class QuestionGenerationResponse(BaseModel):
     success: bool
     generated_count: int
     scope: str
+    message: str
+    error_message: Optional[str] = None
+
+# SQL Generation Schemas
+class SqlGenerationRequest(BaseModel):
+    questions: List[str] = Field(..., description="List of questions to generate SQL for")
+    scope: Optional[Dict[str, Any]] = Field(default=None, description="Generation scope with tables and columns")
+
+class SqlGenerationResponse(BaseModel):
+    success: bool
+    generated_sql: List[Dict[str, Any]]
     message: str
     error_message: Optional[str] = None

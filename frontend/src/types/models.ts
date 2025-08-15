@@ -14,7 +14,7 @@ export interface ModelDetail extends Model {
   tracked_tables: ModelTrackedTable[];
   training_documentation: ModelTrainingDocumentation[];
   training_questions: ModelTrainingQuestion[];
-  training_columns: ModelTrainingColumn[];
+  tracked_columns: ModelTrackedColumn[];
 }
 
 export interface ModelTrackedTable {

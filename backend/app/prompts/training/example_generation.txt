@@ -1,0 +1,19 @@
+Generate {num_examples} natural language questions and their corresponding SQL queries for the table: {table_name}.
+
+Table columns:
+{columns_text}
+
+Your task is to generate a natural language question and its corresponding SQL query for the table: {table_name}.
+
+Guidelines:
+- Use Microsoft SQL Server syntax (square brackets for identifiers, TOP N instead of LIMIT)
+- Questions should be realistic and varied (filtering, aggregation, sorting, etc.)
+- SQL should be correct and executable
+- Include a mix of simple and complex queries
+- Use appropriate WHERE clauses, GROUP BY, ORDER BY as needed
+
+Format each example as:
+Question: [natural language question]
+SQL: [corresponding SQL query]
+
+Generate exactly {num_examples} examples: 

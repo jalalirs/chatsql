@@ -1,0 +1,19 @@
+Generate {num_examples} natural language questions and their corresponding SQL queries that involve JOINs between these tables:
+
+Tables:
+{tables_text}
+
+Your task is to generate questions that require joining multiple tables to answer.
+
+Guidelines:
+- Use Microsoft SQL Server syntax
+- Questions should require data from multiple tables
+- Use appropriate JOIN types (INNER, LEFT, RIGHT)
+- Include realistic business scenarios
+- SQL should be correct and executable
+
+Format each example as:
+Question: [natural language question]
+SQL: [corresponding SQL query with JOINs]
+
+Generate exactly {num_examples} examples: 

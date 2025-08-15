@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Save, X, Play, AlertCircle, CheckCircle, Eye, EyeOff, Database, Edit } from 'lucide-react';
+import { Plus, Edit2, Trash2, Save, X, Play, AlertCircle, CheckCircle, Eye, EyeOff, Database, Edit, CheckSquare } from 'lucide-react';
 import { ModelDetail, ModelTrackedColumn } from '../../types/models';
 import { 
   getTrainingData, 
@@ -16,7 +16,8 @@ import {
   generateColumnDescriptions,
   generateTableDescriptions,
   generateAllDescriptions,
-  getDocumentation
+  getDocumentation,
+  generateSqlFromQuestions
 } from '../../services/training';
 import { getTemplates, DocumentationTemplate } from '../../services/templates';
 import { getModelTrackedColumns, getModelTrackedTables } from '../../services/models';
@@ -493,6 +494,13 @@ const TrainingQuestions: React.FC<{
   const [validationResults, setValidationResults] = useState<{[key: string]: any[]}>({});
   const [showValidationResults, setShowValidationResults] = useState<Set<string>>(new Set());
 
+  // UI state for questions section
+  const [showAIGeneration, setShowAIGeneration] = useState(false);
+  const [showManualQuestion, setShowManualQuestion] = useState(false);
+  
+  // SQL generation state
+  const [generatingSql, setGeneratingSql] = useState(false);
+
   useEffect(() => {
     loadQuestions();
     loadTrackedTables();
@@ -774,6 +782,43 @@ const TrainingQuestions: React.FC<{
     }
   };
 
+  const handleGenerateSql = async () => {
+    if (!formData.question.trim()) {
+      setError('Please enter a question first');
+      return;
+    }
+
+    try {
+      setGeneratingSql(true);
+      setError(null);
+      
+      // Send the current generation scope along with the question
+      const result = await generateSqlFromQuestions(model.id, [formData.question], {
+        tables: generationScope.tables,
+        columns: generationScope.columns
+      });
+      
+      if (result.success && result.generated_sql.length > 0) {
+        const generatedSql = result.generated_sql[0];
+        if (generatedSql.error) {
+          setError(`Generation failed: ${generatedSql.error}`);
+        } else {
+          setFormData(prev => ({
+            ...prev,
+            sql: generatedSql.sql
+          }));
+        }
+      } else {
+        setError('Failed to generate SQL');
+      }
+    } catch (error: any) {
+      console.error('Failed to generate SQL:', error);
+      setError(error.response?.data?.detail || 'Failed to generate SQL');
+    } finally {
+      setGeneratingSql(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -791,31 +836,12 @@ const TrainingQuestions: React.FC<{
     <div className="space-y-6">
       {/* Header */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-4">
+        <div className="mb-4">
           <div>
             <h2 className="text-lg font-medium text-gray-900">Training Questions & SQL</h2>
             <p className="text-gray-600">
               Question-SQL pairs that train the AI model
             </p>
-          </div>
-          
-          <div className="flex items-center gap-3">
-            <button
-              onClick={startCreate}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-            >
-              <Plus size={16} />
-              Add Question
-            </button>
-            
-            <button
-              onClick={generateQuestions}
-              disabled={generating || !generationScope.tables.length}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-            >
-              <Play size={16} className={generating ? 'animate-spin' : ''} />
-              {generating ? 'Generating...' : 'Generate with AI'}
-            </button>
           </div>
         </div>
 
@@ -829,239 +855,8 @@ const TrainingQuestions: React.FC<{
           </div>
         )}
 
-        {/* Generation Progress */}
-        {generating && (
-          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center gap-2 text-blue-800 mb-2">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-              <span className="font-medium">Generating questions... ({generationProgress.current}/{generationProgress.total})</span>
-            </div>
-            
-            <div className="w-full bg-blue-200 rounded-full h-2 mb-4">
-              <div 
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                style={{ width: `${(generationProgress.current / generationProgress.total) * 100}%` }}
-              ></div>
-            </div>
-
-            {generationProgress.generatedQuestions.length > 0 && (
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                <h4 className="text-sm font-medium text-blue-800">Generated Questions:</h4>
-                {generationProgress.generatedQuestions.map((example) => (
-                  <div key={example.id} className="bg-white p-3 rounded border text-sm">
-                    <div className="font-medium text-gray-900 mb-1">
-                      Q: {example.question}
-                    </div>
-                    <div className="text-gray-600 font-mono text-xs bg-gray-50 p-2 rounded">
-                      {example.sql}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-                 {/* Generation Scope Selector */}
-         <div className="bg-white rounded-lg border border-gray-200 p-6">
-           <h4 className="text-lg font-medium text-gray-900 mb-4">Generation Scope</h4>
-           
-           <div className="grid grid-cols-3 gap-6">
-                           {/* Tables Panel */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h5 className="text-sm font-medium text-gray-900 mb-3">Available Tables</h5>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {trackedTables.length > 0 ? (
-                    trackedTables.map((table: any) => (
-                      <div
-                        key={table.id}
-                        onClick={() => {
-                          const isSelected = generationScope.tables.includes(table.table_name);
-                          if (isSelected) {
-                            // Remove table and its columns
-                            setGenerationScope(prev => ({
-                              ...prev,
-                              tables: prev.tables.filter(t => t !== table.table_name),
-                              columns: Object.fromEntries(
-                                Object.entries(prev.columns).filter(([t]) => t !== table.table_name)
-                              )
-                            }));
-                          } else {
-                            // Add table
-                            setGenerationScope(prev => ({
-                              ...prev,
-                              tables: [...prev.tables, table.table_name]
-                            }));
-                          }
-                        }}
-                        className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                          generationScope.tables.includes(table.table_name)
-                            ? 'bg-blue-100 border-blue-300 text-blue-900'
-                            : 'bg-white border-gray-200 hover:bg-gray-100'
-                        }`}
-                      >
-                        <div className="font-medium text-sm">{table.table_name}</div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          {table.schema_name ? `${table.schema_name}.` : ''}{table.table_name}
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-8 text-gray-500">
-                      <p className="text-sm">No tracked tables available</p>
-                      <p className="text-xs mt-1">Add tables in the Tracked Tables tab first</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-                           {/* Columns Panel */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h5 className="text-sm font-medium text-gray-900 mb-3">Available Columns</h5>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {generationScope.tables.length > 0 ? (
-                    generationScope.tables.map((tableName: string) => {
-                      const table = trackedTables.find((t: any) => t.table_name === tableName);
-                      if (!table) return null;
-                      
-                      const columns = tableColumns[table.id] || [];
-                      const trackedColumns = columns.filter((col: any) => col.is_tracked);
-                      
-                      return (
-                        <div key={tableName} className="space-y-2">
-                          <div className="text-xs font-medium text-gray-700 bg-gray-200 px-2 py-1 rounded">
-                            {tableName} ({trackedColumns.length} tracked)
-                          </div>
-                          {trackedColumns.map((column: any) => {
-                            const isSelected = generationScope.columns[tableName]?.includes(column.column_name) || false;
-                            return (
-                              <div
-                                key={`${tableName}.${column.column_name}`}
-                                onClick={() => {
-                                  const currentColumns = generationScope.columns[tableName] || [];
-                                  if (isSelected) {
-                                    // Remove column
-                                    setGenerationScope(prev => ({
-                                      ...prev,
-                                      columns: {
-                                        ...prev.columns,
-                                        [tableName]: currentColumns.filter(c => c !== column.column_name)
-                                      }
-                                    }));
-                                  } else {
-                                    // Add column
-                                    setGenerationScope(prev => ({
-                                      ...prev,
-                                      columns: {
-                                        ...prev.columns,
-                                        [tableName]: [...currentColumns, column.column_name]
-                                      }
-                                    }));
-                                  }
-                                }}
-                                className={`p-2 rounded border cursor-pointer transition-colors text-sm ${
-                                  isSelected
-                                    ? 'bg-green-100 border-green-300 text-green-900'
-                                    : 'bg-white border-gray-200 hover:bg-gray-100'
-                                }`}
-                              >
-                                <div className="font-medium">{column.column_name}</div>
-                                <div className="text-xs text-gray-500">{column.data_type || 'Unknown'}</div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="text-center py-8 text-gray-500">
-                      <p className="text-sm">Select tables to see columns</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-             {/* Scope Preview Panel */}
-             <div className="bg-blue-50 rounded-lg p-4">
-               <h5 className="text-sm font-medium text-blue-900 mb-3">Current Scope</h5>
-               <div className="space-y-3">
-                 <div>
-                   <div className="text-xs font-medium text-blue-700 mb-1">Scope Type</div>
-                   <div className="text-sm text-blue-900 bg-blue-100 px-2 py-1 rounded">
-                     {generationScope.tables.length === 0 ? 'No tables selected' :
-                      generationScope.tables.length === 1 ? 'Single Table' :
-                      Object.values(generationScope.columns).some(cols => cols.length > 0) ? 'Multiple Tables + Columns' :
-                      'Multiple Tables'}
-                   </div>
-                 </div>
-                 
-                 <div>
-                   <div className="text-xs font-medium text-blue-700 mb-1">Selected Tables</div>
-                   <div className="space-y-1">
-                     {generationScope.tables.length > 0 ? (
-                       generationScope.tables.map((tableName: string) => (
-                         <div key={tableName} className="text-sm text-blue-900 bg-blue-100 px-2 py-1 rounded">
-                           {tableName}
-                         </div>
-                       ))
-                     ) : (
-                       <div className="text-sm text-blue-600 italic">No tables selected</div>
-                     )}
-                   </div>
-                 </div>
-                 
-                 <div>
-                   <div className="text-xs font-medium text-blue-700 mb-1">Selected Columns</div>
-                   <div className="space-y-1">
-                     {Object.entries(generationScope.columns).some(([_, cols]) => cols.length > 0) ? (
-                       Object.entries(generationScope.columns).map(([tableName, columns]) => 
-                         columns.map((columnName: string) => (
-                           <div key={`${tableName}.${columnName}`} className="text-sm text-blue-900 bg-blue-100 px-2 py-1 rounded">
-                             {tableName}.{columnName}
-                           </div>
-                         ))
-                       ).flat()
-                     ) : (
-                       <div className="text-sm text-blue-600 italic">All columns available</div>
-                     )}
-                   </div>
-                 </div>
-                 
-                 <div>
-                   <div className="text-xs font-medium text-blue-700 mb-1">Questions to Generate</div>
-                   <select
-                     value={generationScope.numQuestions}
-                     onChange={(e) => setGenerationScope(prev => ({ ...prev, numQuestions: parseInt(e.target.value) }))}
-                     className="w-full p-2 border border-blue-300 rounded text-sm bg-white"
-                   >
-                     <option value={5}>5 questions</option>
-                     <option value={10}>10 questions</option>
-                     <option value={20}>20 questions</option>
-                     <option value={30}>30 questions</option>
-                     <option value={50}>50 questions</option>
-                   </select>
-                 </div>
-               </div>
-             </div>
-           </div>
-         </div>
-
-        {/* Additional Instructions */}
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Additional Instructions for AI Generation
-          </label>
-          <textarea
-            value={additionalInstructions}
-            onChange={(e) => setAdditionalInstructions(e.target.value)}
-            placeholder="Provide specific instructions for question generation (e.g., focus on specific topics, use certain terminology, write in Arabic, etc.)"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            rows={3}
-          />
-        </div>
-
-        {/* Summary */}
-        <div className="grid grid-cols-4 gap-4">
+        {/* Summary Statistics - Moved to top */}
+        <div className="grid grid-cols-4 gap-4 mb-6">
           <div className="bg-blue-50 rounded-lg p-4">
             <div className="text-2xl font-bold text-blue-600">{questions.length}</div>
             <div className="text-sm text-blue-700">Total Questions</div>
@@ -1085,10 +880,314 @@ const TrainingQuestions: React.FC<{
             <div className="text-sm text-orange-700">Validated</div>
           </div>
         </div>
+
+        {/* Generation Scope Selector - Moved above conditional sections */}
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h4 className="text-lg font-medium text-gray-900 mb-4">Generation Scope</h4>
+          
+          <div className="grid grid-cols-3 gap-6">
+            {/* Tables Panel */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <h5 className="text-sm font-medium text-gray-900 mb-3">Available Tables</h5>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {trackedTables.length > 0 ? (
+                  trackedTables.map((table: any) => (
+                    <div
+                      key={table.id}
+                      onClick={() => {
+                        const isSelected = generationScope.tables.includes(table.table_name);
+                        if (isSelected) {
+                          // Remove table and its columns
+                          setGenerationScope(prev => ({
+                            ...prev,
+                            tables: prev.tables.filter(t => t !== table.table_name),
+                            columns: Object.fromEntries(
+                              Object.entries(prev.columns).filter(([t]) => t !== table.table_name)
+                            )
+                          }));
+                        } else {
+                          // Add table
+                          setGenerationScope(prev => ({
+                            ...prev,
+                            tables: [...prev.tables, table.table_name]
+                          }));
+                        }
+                      }}
+                      className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                        generationScope.tables.includes(table.table_name)
+                          ? 'bg-blue-100 border-blue-300 text-blue-900'
+                          : 'bg-white border-gray-200 hover:bg-gray-100'
+                      }`}
+                    >
+                      <div className="font-medium text-sm">{table.table_name}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {table.schema_name ? `${table.schema_name}.` : ''}{table.table_name}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <p className="text-sm">No tracked tables available</p>
+                    <p className="text-xs mt-1">Add tables in the Tracked Tables tab first</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Columns Panel */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <h5 className="text-sm font-medium text-gray-900 mb-3">Available Columns</h5>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {generationScope.tables.length > 0 ? (
+                  generationScope.tables.map((tableName: string) => {
+                    const table = trackedTables.find((t: any) => t.table_name === tableName);
+                    if (!table) return null;
+                    
+                    const columns = tableColumns[table.id] || [];
+                    const trackedColumns = columns.filter((col: any) => col.is_tracked);
+                    
+                    return (
+                      <div key={tableName} className="space-y-2">
+                        <div className="text-xs font-medium text-gray-700 bg-gray-200 px-2 py-1 rounded">
+                          {tableName} ({trackedColumns.length} tracked)
+                        </div>
+                        {trackedColumns.map((column: any) => {
+                          const isSelected = generationScope.columns[tableName]?.includes(column.column_name) || false;
+                          return (
+                            <div
+                              key={`${tableName}.${column.column_name}`}
+                              onClick={() => {
+                                const currentColumns = generationScope.columns[tableName] || [];
+                                if (isSelected) {
+                                  // Remove column
+                                  setGenerationScope(prev => ({
+                                    ...prev,
+                                    columns: {
+                                      ...prev.columns,
+                                      [tableName]: currentColumns.filter(c => c !== column.column_name)
+                                    }
+                                  }));
+                                } else {
+                                  // Add column
+                                  setGenerationScope(prev => ({
+                                    ...prev,
+                                    columns: {
+                                      ...prev.columns,
+                                      [tableName]: [...currentColumns, column.column_name]
+                                    }
+                                  }));
+                                }
+                              }}
+                              className={`p-2 rounded border cursor-pointer text-xs transition-colors ${
+                                isSelected
+                                  ? 'bg-blue-100 border-blue-300 text-blue-900'
+                                  : 'bg-white border-gray-200 hover:bg-gray-100'
+                              }`}
+                            >
+                              {column.column_name}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <p className="text-sm">Select tables first</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Summary Panel */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <h5 className="text-sm font-medium text-gray-900 mb-3">Generation Summary</h5>
+              <div className="space-y-3">
+                <div className="text-sm">
+                  <span className="font-medium">Scope:</span>
+                  <div className="text-xs text-gray-600 mt-1">
+                    {generationScope.tables.length === 0 ? 'No tables selected' :
+                     generationScope.tables.length === 1 ? 'Single Table' :
+                     Object.values(generationScope.columns).some(cols => cols.length > 0) ? 'Multiple Tables + Columns' :
+                     'Multiple Tables'}
+                  </div>
+                </div>
+                
+                <div className="text-sm">
+                  <span className="font-medium">Tables:</span>
+                  <div className="text-xs text-gray-600 mt-1">
+                    {generationScope.tables.length > 0 ? (
+                      generationScope.tables.map((tableName) => (
+                        <div key={tableName} className="flex items-center gap-1">
+                          <span>• {tableName}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <span>None selected</span>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="text-sm">
+                  <span className="font-medium">Columns:</span>
+                  <div className="text-xs text-gray-600 mt-1">
+                    {Object.entries(generationScope.columns).some(([_, cols]) => cols.length > 0) ? (
+                      Object.entries(generationScope.columns).map(([tableName, columns]) =>
+                        columns.length > 0 ? (
+                          <div key={tableName}>
+                            <span className="font-medium">{tableName}:</span>
+                            <div className="ml-2">
+                              {columns.map(col => (
+                                <span key={col} className="block">• {col}</span>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null
+                      )
+                    ) : (
+                      <span>All columns</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Create Form */}
-      {creatingQuestion && (
+      {/* Action Buttons - Completely outside header box */}
+      <div className="flex items-center gap-4 mb-6">
+        <button
+          onClick={() => {
+            setShowManualQuestion(!showManualQuestion);
+            setShowAIGeneration(false); // Hide AI generation when showing manual
+          }}
+          className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+        >
+          <Plus size={16} />
+          Add Question
+        </button>
+        
+        <button
+          onClick={() => {
+            setShowAIGeneration(!showAIGeneration);
+            setShowManualQuestion(false); // Hide manual when showing AI generation
+          }}
+          className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          <Play size={16} />
+          Generate with AI
+        </button>
+      </div>
+
+      {/* AI Generation Section - Only shown when showAIGeneration is true */}
+      {showAIGeneration && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Generate Questions with AI</h3>
+          
+          <div className="space-y-4">
+            {/* Additional Instructions */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Additional Instructions for AI Generation
+              </label>
+              <textarea
+                value={additionalInstructions}
+                onChange={(e) => setAdditionalInstructions(e.target.value)}
+                placeholder="Provide specific instructions for question generation (e.g., focus on specific topics, use certain terminology, write in Arabic, etc.)"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                rows={3}
+              />
+            </div>
+
+            {/* Number of Questions Input Field */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Number of Questions to Generate
+              </label>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setGenerationScope(prev => ({ ...prev, numQuestions: Math.max(1, prev.numQuestions - 1) }))}
+                  className="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                >
+                  -
+                </button>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={generationScope.numQuestions}
+                  onChange={(e) => setGenerationScope(prev => ({ ...prev, numQuestions: parseInt(e.target.value) || 1 }))}
+                  className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <button
+                  onClick={() => setGenerationScope(prev => ({ ...prev, numQuestions: Math.min(100, prev.numQuestions + 1) }))}
+                  className="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            {/* Generation Progress */}
+            {generating && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 text-blue-800 mb-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                  <span className="font-medium">Generating questions... ({generationProgress.current}/{generationProgress.total})</span>
+                </div>
+                
+                <div className="w-full bg-blue-200 rounded-full h-2 mb-4">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                    style={{ width: `${(generationProgress.current / generationProgress.total) * 100}%` }}
+                  ></div>
+                </div>
+
+                {generationProgress.generatedQuestions.length > 0 && (
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    <h4 className="text-sm font-medium text-blue-800">Generated Questions:</h4>
+                    {generationProgress.generatedQuestions.map((example) => (
+                      <div key={example.id} className="bg-white p-3 rounded border text-sm">
+                        <div className="font-medium text-gray-900 mb-1">
+                          Q: {example.question}
+                        </div>
+                        <div className="text-gray-600 font-mono text-xs bg-gray-50 p-2 rounded">
+                          {example.sql}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-3 mt-6">
+            <button
+              onClick={generateQuestions}
+              disabled={generating}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              <Play size={16} className={generating ? 'animate-spin' : ''} />
+              {generating ? 'Generating...' : 'Create'}
+            </button>
+            <button
+              onClick={() => {
+                setShowAIGeneration(false);
+                setAdditionalInstructions('');
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              <X size={16} />
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Question Form - Only shown when showManualQuestion is true */}
+      {showManualQuestion && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="text-lg font-medium text-gray-900 mb-4">Add New Question</h3>
           
@@ -1106,13 +1205,27 @@ const TrainingQuestions: React.FC<{
             
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">SQL Query</label>
-              <textarea
-                value={formData.sql}
-                onChange={(e) => setFormData(prev => ({ ...prev, sql: e.target.value }))}
-                placeholder="SELECT * FROM ..."
-                rows={4}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
-              />
+              <div className="flex gap-2">
+                <textarea
+                  value={formData.sql}
+                  onChange={(e) => setFormData(prev => ({ ...prev, sql: e.target.value }))}
+                  placeholder="SELECT * FROM ..."
+                  rows={4}
+                  className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                />
+                <button
+                  onClick={handleGenerateSql}
+                  disabled={generatingSql || !formData.question.trim()}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+                  title="Generate SQL from question"
+                >
+                  {generatingSql ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  ) : (
+                    'Generate'
+                  )}
+                </button>
+              </div>
             </div>
             
             <div>
@@ -1137,7 +1250,10 @@ const TrainingQuestions: React.FC<{
               Create
             </button>
             <button
-              onClick={cancelEdit}
+              onClick={() => {
+                setShowManualQuestion(false);
+                setFormData({ question: '', sql: '', validation_notes: '' });
+              }}
               className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
             >
               <X size={16} />
@@ -1151,203 +1267,211 @@ const TrainingQuestions: React.FC<{
       <div className="space-y-4">
         {questions.map((question, index) => (
           <div key={question.id} className="bg-white rounded-lg border border-gray-200 p-6">
-            {editingQuestion === question.id ? (
-              // Edit Form
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Question</label>
-                  <textarea
-                    value={formData.question}
-                    onChange={(e) => setFormData(prev => ({ ...prev, question: e.target.value }))}
-                    rows={3}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">SQL Query</label>
-                  <textarea
-                    value={formData.sql}
-                    onChange={(e) => setFormData(prev => ({ ...prev, sql: e.target.value }))}
-                    rows={4}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Validation Notes</label>
-                  <textarea
-                    value={formData.validation_notes}
-                    onChange={(e) => setFormData(prev => ({ ...prev, validation_notes: e.target.value }))}
-                    rows={2}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
+            {/* Question Display - Always shown */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded font-medium">
+                    Q{index + 1}
+                  </span>
+                  <span className={`px-2 py-1 text-xs rounded font-medium ${getSourceBadgeColor(question.generated_by)}`}>
+                    {question.generated_by === 'ai' ? 'AI Generated' : 'Manual'}
+                  </span>
+                  {question.is_validated && (
+                    <span className="flex items-center gap-1 text-green-600 text-sm">
+                      <CheckCircle size={14} />
+                      Validated
+                    </span>
+                  )}
+                  {question.query_type && (
+                    <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded">
+                      {question.query_type}
+                    </span>
+                  )}
+                  {question.difficulty && (
+                    <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded">
+                      {question.difficulty}
+                    </span>
+                  )}
                 </div>
                 
                 <div className="flex gap-2">
                   <button
-                    onClick={() => handleUpdate(question.id)}
-                    className="flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                    onClick={() => handleValidate(question.id)}
+                    disabled={validatingQuestion === question.id}
+                    className="p-1 text-gray-400 hover:text-purple-600 transition-colors disabled:opacity-50"
+                    title="Validate Query"
                   >
-                    <Save size={14} />
-                    Save
+                    {validatingQuestion === question.id ? (
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
+                    ) : (
+                      <CheckSquare size={16} />
+                    )}
                   </button>
                   <button
-                    onClick={cancelEdit}
-                    className="flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+                    onClick={() => toggleExpanded(question.id)}
+                    className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                    title={expandedQuestions.has(question.id) ? "Collapse SQL" : "Expand SQL"}
                   >
-                    <X size={14} />
-                    Cancel
+                    {expandedQuestions.has(question.id) ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                  <button
+                    onClick={() => startEdit(question)}
+                    className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button
+                    onClick={() => setDeletingQuestion(question.id)}
+                    className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                  >
+                    <Trash2 size={16} />
                   </button>
                 </div>
               </div>
-            ) : (
-              // Display View
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded font-medium">
-                      Q{index + 1}
-                    </span>
-                    <span className={`px-2 py-1 text-xs rounded font-medium ${getSourceBadgeColor(question.generated_by)}`}>
-                      {question.generated_by === 'ai' ? 'AI Generated' : 'Manual'}
-                    </span>
-                    {question.is_validated && (
-                      <span className="flex items-center gap-1 text-green-600 text-sm">
-                        <CheckCircle size={14} />
-                        Validated
-                      </span>
-                    )}
-                    {question.query_type && (
-                      <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded">
-                        {question.query_type}
-                      </span>
-                    )}
-                    {question.difficulty && (
-                      <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded">
-                        {question.difficulty}
-                      </span>
-                    )}
-                  </div>
-                  
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => toggleExpanded(question.id)}
-                      className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
-                      title={expandedQuestions.has(question.id) ? "Collapse SQL" : "Expand SQL"}
-                    >
-                      {expandedQuestions.has(question.id) ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                    <button
-                      onClick={() => startEdit(question)}
-                      className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
-                    >
-                      <Edit2 size={16} />
-                    </button>
-                    <button
-                      onClick={() => setDeletingQuestion(question.id)}
-                      className="p-1 text-gray-400 hover:text-red-600 transition-colors"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                    <button
-                      onClick={() => handleValidate(question.id)}
-                      disabled={validatingQuestion === question.id}
-                      className="p-1 text-gray-400 hover:text-purple-600 transition-colors disabled:opacity-50"
-                      title="Validate Query"
-                    >
-                      {validatingQuestion === question.id ? (
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
-                      ) : (
-                        <Database size={16} />
-                      )}
-                    </button>
-                  </div>
+              
+              <div className="mb-3">
+                <h4 className="text-sm font-medium text-gray-700 mb-1">Question</h4>
+                <p className="text-gray-900">{question.question}</p>
+              </div>
+              
+              <div className="mb-3">
+                <h4 className="text-sm font-medium text-gray-700 mb-1">SQL Query</h4>
+                <div className="bg-gray-50 rounded p-3">
+                  <pre className={`text-sm text-gray-800 whitespace-pre-wrap font-mono ${
+                    expandedQuestions.has(question.id) ? '' : 'line-clamp-2'
+                  }`}>
+                    {question.sql}
+                  </pre>
                 </div>
-                
+              </div>
+              
+              {question.involved_columns && question.involved_columns.length > 0 && (
                 <div className="mb-3">
-                  <h4 className="text-sm font-medium text-gray-700 mb-1">Question</h4>
-                  <p className="text-gray-900">{question.question}</p>
+                  <h4 className="text-sm font-medium text-gray-700 mb-1">Involved Columns</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {question.involved_columns.map((col: any, idx: number) => (
+                      <span key={idx} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
+                        {col.table}.{col.column}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-                
+              )}
+              
+              {question.validation_notes && (
                 <div className="mb-3">
-                  <h4 className="text-sm font-medium text-gray-700 mb-1">SQL Query</h4>
-                  <div className="bg-gray-50 rounded p-3">
-                    <pre className={`text-sm text-gray-800 whitespace-pre-wrap font-mono ${
-                      expandedQuestions.has(question.id) ? '' : 'line-clamp-2'
-                    }`}>
-                      {question.sql}
-                    </pre>
-                  </div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-1">Notes</h4>
+                  <p className="text-sm text-gray-600 bg-yellow-50 p-2 rounded">{question.validation_notes}</p>
                 </div>
-                
-                {question.involved_columns && question.involved_columns.length > 0 && (
-                  <div className="mb-3">
-                    <h4 className="text-sm font-medium text-gray-700 mb-1">Involved Columns</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {question.involved_columns.map((col: any, idx: number) => (
-                        <span key={idx} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
-                          {col.table}.{col.column}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {question.validation_notes && (
-                  <div className="mb-3">
-                    <h4 className="text-sm font-medium text-gray-700 mb-1">Notes</h4>
-                    <p className="text-sm text-gray-600 bg-yellow-50 p-2 rounded">{question.validation_notes}</p>
-                  </div>
-                )}
+              )}
 
-                {/* Query Results */}
-                {validationResults[question.id] && showValidationResults.has(question.id) && (
-                  <div className="mb-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <div className="flex justify-between items-center mb-2">
-                      <h4 className="text-sm font-medium text-blue-800">Query Results</h4>
-                      <button 
-                        onClick={() => toggleValidationResults(question.id)}
-                        className="text-blue-600 hover:text-blue-800 text-sm"
-                      >
-                        Hide
-                      </button>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-blue-200">
-                            {Object.keys(validationResults[question.id][0] || {}).map(key => (
-                              <th key={key} className="text-left py-2 px-2 font-medium text-blue-800">
-                                {key}
-                              </th>
+              {/* Query Results */}
+              {validationResults[question.id] && showValidationResults.has(question.id) && (
+                <div className="mb-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-sm font-medium text-blue-800">Query Results</h4>
+                    <button 
+                      onClick={() => toggleValidationResults(question.id)}
+                      className="text-blue-600 hover:text-blue-800 text-sm"
+                    >
+                      Hide
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-blue-200">
+                          {Object.keys(validationResults[question.id][0] || {}).map(key => (
+                            <th key={key} className="text-left py-2 px-2 font-medium text-blue-800">
+                              {key}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {validationResults[question.id].slice(0, 10).map((row: any, index: number) => (
+                          <tr key={index} className="border-b border-blue-100">
+                            {Object.values(row).map((value: any, cellIndex: number) => (
+                              <td key={cellIndex} className="py-2 px-2 text-blue-700">
+                                {String(value)}
+                              </td>
                             ))}
                           </tr>
-                        </thead>
-                        <tbody>
-                          {validationResults[question.id].slice(0, 10).map((row: any, index: number) => (
-                            <tr key={index} className="border-b border-blue-100">
-                              {Object.values(row).map((value: any, cellIndex: number) => (
-                                <td key={cellIndex} className="py-2 px-2 text-blue-700">
-                                  {String(value)}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {validationResults[question.id].length > 10 && (
-                        <p className="text-xs text-blue-600 mt-2">
-                          Showing first 10 of {validationResults[question.id].length} rows
-                        </p>
-                      )}
-                    </div>
+                        ))}
+                      </tbody>
+                    </table>
+                    {validationResults[question.id].length > 10 && (
+                      <p className="text-xs text-blue-600 mt-2">
+                        Showing first 10 of {validationResults[question.id].length} rows
+                      </p>
+                    )}
                   </div>
-                )}
-                
-                <div className="text-xs text-gray-500">
-                  Created: {new Date(question.created_at).toLocaleString()} | 
-                  Updated: {new Date(question.updated_at).toLocaleString()}
+                </div>
+              )}
+              
+              <div className="text-xs text-gray-500">
+                Created: {new Date(question.created_at).toLocaleString()} | 
+                Updated: {new Date(question.updated_at).toLocaleString()}
+              </div>
+            </div>
+
+            {/* Edit Form - Shown below question when editing */}
+            {editingQuestion === question.id && (
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <h4 className="text-sm font-medium text-gray-700 mb-4">Edit Question</h4>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Question</label>
+                    <textarea
+                      value={formData.question}
+                      onChange={(e) => setFormData(prev => ({ ...prev, question: e.target.value }))}
+                      rows={3}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">SQL Query</label>
+                    <textarea
+                      value={formData.sql}
+                      onChange={(e) => setFormData(prev => ({ ...prev, sql: e.target.value }))}
+                      rows={4}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
+                    <textarea
+                      value={formData.validation_notes}
+                      onChange={(e) => setFormData(prev => ({ ...prev, validation_notes: e.target.value }))}
+                      placeholder="Add any notes about this question-SQL pair..."
+                      rows={2}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => handleUpdate(question.id)}
+                      disabled={!formData.question || !formData.sql}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                    >
+                      <Save size={16} />
+                      Update
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingQuestion(null);
+                        setFormData({ question: '', sql: '', validation_notes: '' });
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                    >
+                      <X size={16} />
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1366,14 +1490,20 @@ const TrainingQuestions: React.FC<{
             </p>
             <div className="flex gap-3 justify-center">
               <button
-                onClick={startCreate}
+                onClick={() => {
+                  setShowManualQuestion(!showManualQuestion);
+                  setShowAIGeneration(false); // Hide AI generation when showing manual
+                }}
                 className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
               >
                 <Plus size={16} />
                 Add Question
               </button>
               <button
-                onClick={generateQuestions}
+                onClick={() => {
+                  setShowAIGeneration(!showAIGeneration);
+                  setShowManualQuestion(false); // Hide manual when showing AI generation
+                }}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
                 <Play size={16} />

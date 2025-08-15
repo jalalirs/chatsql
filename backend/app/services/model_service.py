@@ -80,7 +80,42 @@ class ModelService:
         if not model:
             return None
         
-        # Create the response without using from_orm to avoid relationship loading issues
+        # Load tracked tables
+        tracked_tables_stmt = select(ModelTrackedTable).where(
+            ModelTrackedTable.model_id == model_id
+        )
+        tracked_tables_result = await self.db.execute(tracked_tables_stmt)
+        tracked_tables = tracked_tables_result.scalars().all()
+        
+        # Load training documentation
+        from app.models.database import ModelTrainingDocumentation
+        training_docs_stmt = select(ModelTrainingDocumentation).where(
+            ModelTrainingDocumentation.model_id == model_id
+        )
+        training_docs_result = await self.db.execute(training_docs_stmt)
+        training_documentation = training_docs_result.scalars().all()
+        
+        # Load training questions
+        from app.models.database import ModelTrainingQuestion
+        training_questions_stmt = select(ModelTrainingQuestion).where(
+            ModelTrainingQuestion.model_id == model_id
+        )
+        training_questions_result = await self.db.execute(training_questions_stmt)
+        training_questions = training_questions_result.scalars().all()
+        
+        # Load tracked columns (ModelTrackedColumn, not ModelTrainingColumn) - only those with is_tracked=true
+        tracked_columns_stmt = select(ModelTrackedColumn).join(
+            ModelTrackedTable, ModelTrackedColumn.model_tracked_table_id == ModelTrackedTable.id
+        ).where(
+            and_(
+                ModelTrackedTable.model_id == model_id,
+                ModelTrackedColumn.is_tracked == True
+            )
+        )
+        tracked_columns_result = await self.db.execute(tracked_columns_stmt)
+        tracked_columns = tracked_columns_result.scalars().all()
+        
+        # Create the response with loaded relationships
         return ModelDetailResponse(
             id=model.id,
             connection_id=model.connection_id,
@@ -90,10 +125,10 @@ class ModelService:
             status=model.status,
             created_at=model.created_at,
             updated_at=model.updated_at,
-            tracked_tables=[],  # Will be populated separately if needed
-            training_documentation=[],  # Will be populated separately if needed
-            training_questions=[],  # Will be populated separately if needed
-            training_columns=[]  # Will be populated separately if needed
+            tracked_tables=tracked_tables,
+            training_documentation=training_documentation,
+            training_questions=training_questions,
+            tracked_columns=tracked_columns
         )
     
     async def get_models(self, user_id: UUID, page: int = 1, per_page: int = 20, 

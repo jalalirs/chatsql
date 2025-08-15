@@ -232,9 +232,6 @@ const ModelTables: React.FC<ModelTablesProps> = ({ model, onModelUpdate }) => {
                     </button>
                     <div>
                       <h4 className="text-sm font-medium text-gray-900">{table.table_name}</h4>
-                      <p className="text-sm text-gray-500">
-                        Table tracked
-                      </p>
                     </div>
                   </div>
                   <button

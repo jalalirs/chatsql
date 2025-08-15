@@ -1230,49 +1230,26 @@ class TrainingService:
             for col in column_info
         ])
         
-        return f"""Generate {num_examples} natural language questions and their corresponding SQL queries for the table: {table_name}.
-
-Table columns:
-{columns_text}
-
-Your task is to generate a natural language question and its corresponding SQL query for the table: {table_name}.
-
-Guidelines:
-- Use Microsoft SQL Server syntax (square brackets for identifiers, TOP N instead of LIMIT)
-- Questions should be realistic and varied (filtering, aggregation, sorting, etc.)
-- SQL should be correct and executable
-- Include a mix of simple and complex queries
-- Use appropriate WHERE clauses, GROUP BY, ORDER BY as needed
-
-Format each example as:
-Question: [natural language question]
-SQL: [corresponding SQL query]
-
-Generate exactly {num_examples} examples:"""
+        with open("app/prompts/training/example_generation.txt", 'r') as f:
+            template = f.read()
+        
+        return template.format(
+            table_name=table_name,
+            columns_text=columns_text,
+            num_examples=num_examples
+        )
     
     def _build_cross_table_prompt(self, table_names: List[str], num_examples: int) -> str:
         """Build prompt for cross-table example generation"""
         tables_text = "\n".join([f"- {table}" for table in table_names])
         
-        return f"""Generate {num_examples} natural language questions and their corresponding SQL queries that involve JOINs between these tables:
-
-Tables:
-{tables_text}
-
-Your task is to generate questions that require joining multiple tables to answer.
-
-Guidelines:
-- Use Microsoft SQL Server syntax
-- Questions should require data from multiple tables
-- Use appropriate JOIN types (INNER, LEFT, RIGHT)
-- Include realistic business scenarios
-- SQL should be correct and executable
-
-Format each example as:
-Question: [natural language question]
-SQL: [corresponding SQL query with JOINs]
-
-Generate exactly {num_examples} examples:"""
+        with open("app/prompts/training/cross_table_generation.txt", 'r') as f:
+            template = f.read()
+        
+        return template.format(
+            tables_text=tables_text,
+            num_examples=num_examples
+        )
     
     def _parse_ai_examples_response(self, response: str) -> List[Dict[str, Any]]:
         """Parse AI response into structured examples"""
@@ -2630,6 +2607,185 @@ Generate exactly {num_examples} examples:"""
         
         await db.commit()
         return saved_count
+
+    async def generate_sql_from_questions(
+        self,
+        db: AsyncSession,
+        model_id: str,
+        user: User,
+        questions: List[str],
+        scope: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Generate SQL queries from a list of questions using AI"""
+        try:
+            # Get model and verify ownership
+            model = await self._get_model_and_verify_ownership(db, model_id, user)
+            if not model:
+                return {"success": False, "error": f"Model {model_id} not found or access denied"}
+            
+            # Get connection for database access
+            connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
+            if not connection:
+                return {"success": False, "error": "Connection not found for model"}
+            
+            # Get tracked tables and columns for context
+            tracked_tables = await self._get_model_tracked_tables(db, model_id)
+            if not tracked_tables:
+                return {"success": False, "error": "No tracked tables found for model"}
+            
+            # Filter tracked tables based on scope if provided
+            if scope and scope.get('tables'):
+                scope_tables = set(scope['tables'])
+                tracked_tables = [table for table in tracked_tables if table.table_name in scope_tables]
+                if not tracked_tables:
+                    return {"success": False, "error": "No tracked tables found matching the provided scope"}
+            
+            # Get existing training data for context
+            training_data = await self.get_model_training_data(db, model_id)
+            
+            # Get documentation for context
+            documentation = await self.get_model_training_documentation(db, model_id)
+            
+            generated_sql = []
+            
+            for question in questions:
+                try:
+                    # Build context for AI generation
+                    context = self._build_sql_generation_context(
+                        question=question,
+                        tracked_tables=tracked_tables,
+                        training_data=training_data,
+                        documentation=documentation,
+                        connection=connection
+                    )
+                    
+                    # Generate SQL using AI
+                    sql = await self._generate_sql_with_ai(context)
+                    
+                    # Fix TOP spacing issues
+                    sql = self._fix_top_spacing(sql)
+                    
+                    generated_sql.append({
+                        "question": question,
+                        "sql": sql
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate SQL for question '{question}': {e}")
+                    generated_sql.append({
+                        "question": question,
+                        "sql": f"-- Error generating SQL: {str(e)}",
+                        "error": str(e)
+                    })
+            
+            return {
+                "success": True,
+                "generated_sql": generated_sql,
+                "message": f"Generated SQL for {len(questions)} question(s)"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in generate_sql_from_questions: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _build_sql_generation_context(
+        self,
+        question: str,
+        tracked_tables: List[Any],
+        training_data: Dict[str, Any],
+        documentation: List[Any],
+        connection: Any
+    ) -> str:
+        """Build context for SQL generation"""
+        
+        # Database schema context
+        schema_context = "Database Schema:\n"
+        for table in tracked_tables:
+            schema_context += f"- Table: {table.table_name}\n"
+            # Add columns if available
+            if hasattr(table, 'columns'):
+                for col in table.columns:
+                    schema_context += f"  - {col.column_name} ({col.data_type})\n"
+        
+        # Training examples context
+        examples_context = ""
+        if training_data.get('questions'):
+            examples_context = "\nTraining Examples:\n"
+            for i, q in enumerate(training_data['questions'][:5]):  # Use first 5 examples
+                examples_context += f"Q{i+1}: {q['question']}\nSQL{i+1}: {q['sql']}\n\n"
+        
+        # Documentation context
+        docs_context = ""
+        if documentation:
+            docs_context = "\nDocumentation:\n"
+            for doc in documentation[:3]:  # Use first 3 docs
+                docs_context += f"- {doc.content}\n"
+        
+        # MSSQL conventions
+        mssql_context = """
+MSSQL Conventions:
+- Use square brackets [] for identifiers: [table_name], [column_name]
+- Use TOP N for limiting results: SELECT TOP 5 column_name
+- Use + for string concatenation
+- Use ISNULL() or COALESCE() for NULL handling
+- Use GETDATE() for current date/time
+"""
+        
+        full_context = f"""
+{schema_context}
+{examples_context}
+{docs_context}
+{mssql_context}
+
+Question: {question}
+
+Generate a valid MSSQL query for the above question:
+"""
+        
+        return full_context
+
+    async def _generate_sql_with_ai(self, context: str) -> str:
+        """Generate SQL using OpenAI API"""
+        try:
+            client = self._get_openai_client()
+            
+            response = client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert SQL developer specializing in Microsoft SQL Server. Generate only the SQL query without any explanations or markdown formatting."
+                    },
+                    {
+                        "role": "user",
+                        "content": context
+                    }
+                ],
+                temperature=0.1,
+                max_tokens=500
+            )
+            
+            sql = response.choices[0].message.content.strip()
+            
+            # Clean up the response
+            if sql.startswith('```sql'):
+                sql = sql[6:]
+            if sql.endswith('```'):
+                sql = sql[:-3]
+            
+            return sql.strip()
+            
+        except Exception as e:
+            logger.error(f"AI generation failed: {e}")
+            raise
+
+    def _fix_top_spacing(self, sql: str) -> str:
+        """Fix TOP spacing issues in generated SQL"""
+        if sql:
+            import re
+            sql = re.sub(r'TOP(\d+)', r'TOP \1', sql)
+            logger.info(f"Fixed TOP spacing in SQL: {sql}")
+        return sql
 
 # Global instance
 training_service = TrainingService()

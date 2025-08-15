@@ -17,7 +17,7 @@ from app.models.schemas import (
     ModelTrainingQuestionCreate, ModelTrainingQuestionUpdate, ModelTrainingQuestionResponse,
     ModelTrainingColumnCreate, ModelTrainingColumnUpdate, ModelTrainingColumnResponse,
     ModelTrainingRequest, ModelTrainingResponse, ModelQueryRequest, ModelQueryResponse,
-    QuestionGenerationRequest, QuestionGenerationResponse
+    QuestionGenerationRequest, QuestionGenerationResponse, SqlGenerationRequest
 )
 from app.services.training_service import training_service
 from app.models.database import User
@@ -656,6 +656,40 @@ async def generate_all_descriptions_sse(
             "X-Accel-Buffering": "no"
         }
     )
+
+# Generate SQL from Questions Endpoint
+@router.post("/models/{model_id}/generate-sql")
+async def generate_sql_from_questions(
+    request: SqlGenerationRequest,
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Generate SQL queries from a list of questions with optional scope"""
+    try:
+        if not request.questions:
+            raise HTTPException(status_code=400, detail="At least one question is required")
+        
+        result = await training_service.generate_sql_from_questions(
+            db=db,
+            model_id=str(model_id),
+            user=current_user,
+            questions=request.questions,
+            scope=request.scope
+        )
+        
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result.get("error", "SQL generation failed"))
+        
+        return {
+            "success": True,
+            "generated_sql": result["generated_sql"],
+            "message": f"Generated SQL for {len(request.questions)} question(s)"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate SQL: {str(e)}")
 
 # Enhanced Training Generation Endpoint
 @router.post("/models/{model_id}/generate-questions", response_model=QuestionGenerationResponse)
