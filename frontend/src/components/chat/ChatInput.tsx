@@ -47,7 +47,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyPress={handleKeyPress}
-          placeholder={selectedConnection ? "Message Tex2SQL..." : "Select a connection to start chatting"}
+          placeholder={selectedConnection ? "Message ChatSQL..." : "Select a connection to start chatting"}
           disabled={!selectedConnection || loading}
           className={`w-full p-3 pr-12 border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all min-h-[52px] max-h-[200px] ${
             !selectedConnection 
@@ -120,7 +120,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
         {/* Helper Text */}
         <div className="text-xs text-gray-400">
-          Tex2SQL can make mistakes
+          ChatSQL can make mistakes
         </div>
       </div>
 

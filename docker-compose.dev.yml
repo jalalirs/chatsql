@@ -30,7 +30,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/tex2sql
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/chatsql
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - SECRET_KEY=${SECRET_KEY}
       - DEVELOPMENT_MODE=true
@@ -48,7 +48,7 @@ services:
   postgres:
     image: postgres:15
     environment:
-      POSTGRES_DB: tex2sql
+      POSTGRES_DB: chatsql
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:

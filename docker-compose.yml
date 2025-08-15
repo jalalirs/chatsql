@@ -5,7 +5,7 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_DB: tex2sql
+      POSTGRES_DB: chatsql
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     volumes:
@@ -39,7 +39,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/tex2sql
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/chatsql
     volumes:
       - ./backend/data:/app/data
       - ./backend/uploads:/app/uploads

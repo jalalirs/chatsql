@@ -1,8 +1,8 @@
-# Tex2SQL Frontend Design Specification
+# ChatSQL Frontend Design Specification
 
 ## Project Overview
 
-Tex2SQL is a FastAPI-based Text-to-SQL platform that allows users to connect to MS SQL Server databases, train AI models using Vanna AI + OpenAI, and query databases using natural language through a conversation-based interface with real-time Server-Sent Events (SSE).
+ChatSQL is a FastAPI-based Text-to-SQL platform that allows users to connect to MS SQL Server databases, train AI models using Vanna AI + OpenAI, and query databases using natural language through a conversation-based interface with real-time Server-Sent Events (SSE).
 
 ## Core System Architecture
 

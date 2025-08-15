@@ -21,7 +21,7 @@ async def health_check():
     """Basic health check endpoint"""
     return {
         "status": "healthy",
-        "service": "Tex2SQL API",
+        "service": "ChatSQL API",
         "version": "1.0.0"
     }
 
