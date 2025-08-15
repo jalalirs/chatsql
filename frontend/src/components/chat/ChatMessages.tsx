@@ -63,7 +63,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
               
               {/* SQL Block */}
               {msg.sql && (
-                <div className="mt-4 rounded-lg overflow-hidden animate-fadeIn">
+                <div className="mt-4 rounded-lg overflow-hidden animate-fadeIn max-w-full">
                   <div className="flex items-center gap-2 text-gray-300 text-xs mb-2 px-3 py-2 bg-gray-800">
                     <Play size={12} />
                     Generated SQL
@@ -74,8 +74,12 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                     customStyle={{
                       margin: 0,
                       borderRadius: 0,
-                      fontSize: '14px'
+                      fontSize: '14px',
+                      wordWrap: 'break-word',
+                      whiteSpace: 'pre-wrap',
+                      overflowWrap: 'break-word'
                     }}
+                    wrapLongLines={true}
                   >
                     {msg.sql}
                   </SyntaxHighlighter>

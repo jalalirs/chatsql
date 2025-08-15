@@ -41,7 +41,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   useEffect(() => {
     if (location.state?.selectedConnectionId && connections.length > 0) {
       const connection = connections.find(c => c.id === location.state.selectedConnectionId);
-      if (connection && connection.status === 'trained') {
+      if (connection && connection.status === 'test_success') {
         setSelectedConnection(connection);
         // Clear the navigation state to prevent re-selection
         window.history.replaceState({}, document.title);
@@ -57,12 +57,12 @@ export const ChatMain: React.FC<ChatMainProps> = ({
     loadConnections();
   }, []);
 
-  // Auto-select connection if only one trained connection exists
+  // Auto-select connection if only one available connection exists
   useEffect(() => {
-    const trainedConnections = connections.filter(conn => conn.status === 'trained');
-    if (trainedConnections.length === 1 && !selectedConnection) {
-      setSelectedConnection(trainedConnections[0]);
-    } else if (trainedConnections.length === 0) {
+    const availableConnections = connections.filter(conn => conn.status === 'test_success');
+    if (availableConnections.length === 1 && !selectedConnection) {
+      setSelectedConnection(availableConnections[0]);
+    } else if (availableConnections.length === 0) {
       setSelectedConnection(null);
     }
   }, [connections, selectedConnection]);
@@ -344,6 +344,54 @@ export const ChatMain: React.FC<ChatMainProps> = ({
             }
           });
           
+          eventSource.addEventListener('sql_execution_failed', (event) => {
+            console.log('❌ SQL execution failed event:', event.data);
+            try {
+              const data = JSON.parse(event.data);
+              setMessages(prev => prev.map(msg => 
+                msg.id === aiMessageId 
+                  ? { 
+                      ...msg, 
+                      content: `SQL execution failed: ${data.error}`,
+                      sql: data.sql
+                    }
+                  : msg
+              ));
+              setLoading(false);
+            } catch (e) {
+              console.error('Error in sql_execution_failed:', e);
+            }
+          });
+          
+          eventSource.addEventListener('no_data', (event) => {
+            console.log('📭 No data event:', event.data);
+            try {
+              const data = JSON.parse(event.data);
+              setMessages(prev => prev.map(msg => 
+                msg.id === aiMessageId 
+                  ? { 
+                      ...msg, 
+                      content: data.message || "Query executed successfully but returned no data."
+                    }
+                  : msg
+              ));
+              setLoading(false);
+            } catch (e) {
+              console.error('Error in no_data:', e);
+            }
+          });
+          
+          eventSource.addEventListener('query_completed', (event) => {
+            console.log('✅ Query completed event:', event.data);
+            try {
+              const data = JSON.parse(event.data);
+              setLoading(false);
+              // The message content should already be updated by other events
+            } catch (e) {
+              console.error('Error in query_completed:', e);
+            }
+          });
+          
           eventSource.addEventListener('chart_generated', (event) => { // Keep this one
             console.log('📈 Chart generated event:', event.data);
             try {
@@ -510,8 +558,8 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   };
 
   // Check if chat should be disabled
-  const trainedConnections = connections.filter(conn => conn.status === 'trained');
-  const isChatDisabled = trainedConnections.length === 0;
+  const availableConnections = connections.filter(conn => conn.status === 'test_success');
+  const isChatDisabled = availableConnections.length === 0;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -539,7 +587,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
         {loadingMessages ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-gray-500">Loading conversation...</div>

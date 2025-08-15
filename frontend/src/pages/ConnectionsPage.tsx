@@ -72,62 +72,29 @@ export const ConnectionsPage: React.FC = () => {
   
   const getStatusInfo = (status: string) => {
     switch (status) {
-      case 'trained':
+      case 'test_success':
         return { 
           icon: CheckCircle, 
           color: 'text-green-600', 
           bg: 'bg-green-100', 
-          text: 'Trained',
-          description: 'Ready for queries'
-        };
-      case 'training':
-        return { 
-          icon: Zap, 
-          color: 'text-yellow-600', 
-          bg: 'bg-yellow-100', 
-          text: 'Training',
-          description: 'Model training in progress'
-        };
-      case 'data_generated':
-        return { 
-          icon: Play, 
-          color: 'text-blue-600', 
-          bg: 'bg-blue-100', 
-          text: 'Ready to Train',
-          description: 'Training data ready'
-        };
-      case 'test_success':
-        return { 
-          icon: CheckCircle, 
-          color: 'text-blue-600', 
-          bg: 'bg-blue-100', 
           text: 'Connected',
           description: 'Connection tested successfully'
-        };
-      case 'generating_data':
-        return { 
-          icon: Clock, 
-          color: 'text-yellow-600', 
-          bg: 'bg-yellow-100', 
-          text: 'Generating',
-          description: 'Creating training examples'
         };
       case 'testing':
         return { 
           icon: Clock, 
-          color: 'text-gray-600', 
-          bg: 'bg-gray-100', 
+          color: 'text-blue-600', 
+          bg: 'bg-blue-100', 
           text: 'Testing',
           description: 'Testing connection'
         };
       case 'test_failed':
-      case 'training_failed':
         return { 
           icon: AlertCircle, 
           color: 'text-red-600', 
           bg: 'bg-red-100', 
           text: 'Failed',
-          description: 'Action required'
+          description: 'Connection test failed'
         };
       default:
         return { 
@@ -292,24 +259,15 @@ export const ConnectionsPage: React.FC = () => {
                       {/* Actions Dropdown */}
                       {showActions === connection.id && (
                         <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-lg shadow-lg z-10 min-w-[120px]">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleActionClick('view', connection.id);
-                            }}
-                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 first:rounded-t-lg"
-                          >
-                            View Details
-                          </button>
-                          {connection.status === 'trained' && (
+                          {connection.status === 'test_success' && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleActionClick('retrain', connection.id);
+                                navigate(`/connections/${connection.id}`);
                               }}
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50"
+                              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
                             >
-                              Retrain Model
+                              View Details
                             </button>
                           )}
                           <button
@@ -341,15 +299,9 @@ export const ConnectionsPage: React.FC = () => {
                       <span className="text-gray-900">{connection.database_name}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-500">Table:</span>
-                      <span className="text-gray-900">{connection.table_name}</span>
+                      <span className="text-gray-500">Server:</span>
+                      <span className="text-gray-900">{connection.server}</span>
                     </div>
-                    {connection.total_queries > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Queries:</span>
-                        <span className="text-gray-900">{connection.total_queries}</span>
-                      </div>
-                    )}
                     <div className="flex justify-between">
                       <span className="text-gray-500">Created:</span>
                       <span className="text-gray-900">
@@ -358,19 +310,19 @@ export const ConnectionsPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {connection.status === 'trained' && (
+                  {connection.status === 'test_success' && (
                     <div className="mt-4 pt-4 border-t border-gray-100">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          navigate('/', { state: { selectedConnectionId: connection.id } });
+                          navigate(`/connections/${connection.id}`);
                         }}
                         className="w-full px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
                       >
                         <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
                           <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
                         </svg>
-                        Use in Chat
+                        View Details
                       </button>
                     </div>
                   )}
@@ -412,9 +364,8 @@ export const ConnectionsPage: React.FC = () => {
               </p>
               <ul className="text-sm text-gray-600 mt-1 ml-4 list-disc">
                 <li>The database connection</li>
-                <li>All training data and documentation</li>
-                <li>All conversation history</li>
-                <li>The trained AI model</li>
+                <li>All schema information</li>
+                <li>All column descriptions</li>
               </ul>
             </div>
             

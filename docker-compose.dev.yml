@@ -1,0 +1,73 @@
+services:
+  # Development frontend with hot reloading
+  frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"  # Use port 3001 on host to avoid conflicts
+    volumes:
+      # Mount source code for hot reloading
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/package.json:/app/package.json
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js
+      - ./frontend/postcss.config.js:/app/postcss.config.js
+    environment:
+      - CHOKIDAR_USEPOLLING=true  # Enable file watching in Docker
+      - WATCHPACK_POLLING=true    # Enable webpack polling
+    stdin_open: true
+    tty: true
+
+  # Keep the existing backend and database services
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "6020:6020"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/chatsql
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - DEVELOPMENT_MODE=true
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+    depends_on:
+      - postgres
+      - mssql
+    volumes:
+      - ./backend:/app
+      - ./backend/uploads:/app/uploads
+      - ./backend/data:/app/data
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: chatsql
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  mssql:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    environment:
+      - ACCEPT_EULA=1
+      - MSSQL_SA_PASSWORD=l.messi10
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+      - ./backend/scripts/create_test_db.sql:/docker-entrypoint-initdb.d/create_test_db.sql
+
+volumes:
+  postgres_data:
+  mssql_data:

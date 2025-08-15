@@ -36,7 +36,7 @@ export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="max-w-md w-full space-y-8">
         <div className="text-center">
-          <h2 className="text-3xl font-bold text-gray-900">Sign in to Tex2SQL</h2>
+          <h2 className="text-3xl font-bold text-gray-900">Sign in to ChatSQL</h2>
           <p className="mt-2 text-gray-600">Transform your questions into SQL queries</p>
         </div>
 

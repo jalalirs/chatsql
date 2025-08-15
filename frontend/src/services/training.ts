@@ -1,108 +1,47 @@
 // src/services/training.ts
 import { api } from './auth';
-
-export interface TrainingTaskResponse {
-  task_id: string;
-  connection_id: string;
-  task_type: string;
-  status: string;
-  progress: number;
-  stream_url: string;
-  created_at: string;
-}
-
-export interface TaskStatus {
-  task_id: string;
-  connection_id: string;
-  user_id: string;
-  task_type: string;
-  status: string;
-  progress: number;
-  error_message?: string;
-  started_at?: string;
-  completed_at?: string;
-  created_at: string;
-}
-
-export interface GenerateExamplesRequest {
-  num_examples: number;
-}
-
-export interface TrainingDocumentation {
-  id: string;
-  connection_id: string;
-  title: string;
-  doc_type: string;
-  content: string;
-  category?: string;
-  order_index: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DocumentationCreateRequest {
-  title: string;
-  doc_type: string;
-  content: string;
-  category?: string;
-  order_index?: number;
-}
-
-export interface DocumentationUpdateRequest {
-  title?: string;
-  doc_type?: string;
-  content?: string;
-  category?: string;
-  order_index?: number;
-  is_active?: boolean;
-}
-
-export interface TrainingQuestionSql {
-  id: string;
-  connection_id: string;
-  question: string;
-  sql: string;
-  generated_by: string;
-  generation_model?: string;
-  is_validated: boolean;
-  validation_notes?: string;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface QuestionCreateRequest {
-  question: string;
-  sql: string;
-  generated_by?: string;
-  generation_model?: string;
-  is_validated?: boolean;
-  validation_notes?: string;
-}
-
-export interface QuestionUpdateRequest {
-  question?: string;
-  sql?: string;
-  generated_by?: string;
-  generation_model?: string;
-  is_validated?: boolean;
-  validation_notes?: string;
-  is_active?: boolean;
-}
+import {
+  TrainingTaskResponse,
+  TaskStatus,
+  GenerateDataRequest,
+  ModelTrainingDocumentation,
+  ModelTrainingQuestion,
+  ModelTrainingColumn,
+  ModelTrainingData,
+  DocumentationCreateRequest,
+  DocumentationUpdateRequest,
+  QuestionCreateRequest,
+  QuestionUpdateRequest,
+  ColumnCreateRequest,
+  ColumnUpdateRequest,
+  ModelQueryRequest,
+  ModelQueryResponse,
+  QuestionGenerationRequest,
+  QuestionGenerationResponse,
+  QuestionGenerationProgress
+} from '../types/models';
 
 export const trainingService = {
-  // Generate training data for a connection
-  async generateTrainingData(connectionId: string, numExamples: number): Promise<TrainingTaskResponse> {
-    const response = await api.post(`/connections/${connectionId}/generate-data`, {
+  // Generate training data for a model
+  async generateTrainingData(modelId: string, numExamples: number): Promise<TrainingTaskResponse> {
+    const response = await api.post(`/training/models/${modelId}/generate-data`, {
       num_examples: numExamples
     });
     return response.data;
   },
 
-  // Train the model for a connection
-  async trainModel(connectionId: string): Promise<TrainingTaskResponse> {
-    const response = await api.post(`/connections/${connectionId}/train`);
+  // Train the model
+  async trainModel(modelId: string): Promise<TrainingTaskResponse> {
+    const response = await api.post(`/training/models/${modelId}/train`);
+    return response.data;
+  },
+
+  // Query a trained model
+  async queryModel(modelId: string, question: string, conversationId?: string): Promise<ModelQueryResponse> {
+    const response = await api.post(`/training/models/${modelId}/query`, {
+      question,
+      conversation_id: conversationId
+    });
     return response.data;
   },
 
@@ -119,51 +58,231 @@ export const trainingService = {
     return response.data;
   },
 
-  // Get training data for a connection
-  async getTrainingData(connectionId: string) {
-    const response = await api.get(`/connections/${connectionId}/training-data`);
+  // Get all training data for a model
+  async getTrainingData(modelId: string): Promise<ModelTrainingData> {
+    const response = await api.get(`/training/models/${modelId}/training-data`);
     return response.data;
   },
 
   // Documentation methods
-  async getDocumentation(connectionId: string): Promise<{documentation: TrainingDocumentation[], total: number, connection_id: string}> {
-    const response = await api.get(`/connections/${connectionId}/documentation`);
+  async getDocumentation(modelId: string): Promise<{documentation: ModelTrainingDocumentation[], total: number, model_id: string}> {
+    const response = await api.get(`/training/models/${modelId}/documentation`);
     return response.data;
   },
 
-  async createDocumentation(connectionId: string, data: DocumentationCreateRequest): Promise<TrainingDocumentation> {
-    const response = await api.post(`/connections/${connectionId}/documentation`, data);
+  async createDocumentation(modelId: string, data: DocumentationCreateRequest): Promise<ModelTrainingDocumentation> {
+    const response = await api.post(`/training/models/${modelId}/documentation`, data);
     return response.data;
   },
 
-  async updateDocumentation(connectionId: string, docId: string, data: DocumentationUpdateRequest): Promise<TrainingDocumentation> {
-    const response = await api.put(`/connections/${connectionId}/documentation/${docId}`, data);
+  async updateDocumentation(docId: string, data: DocumentationUpdateRequest): Promise<ModelTrainingDocumentation> {
+    const response = await api.put(`/training/documentation/${docId}`, data);
     return response.data;
   },
 
-  async deleteDocumentation(connectionId: string, docId: string): Promise<{success: boolean, message: string}> {
-    const response = await api.delete(`/connections/${connectionId}/documentation/${docId}`);
+  async deleteDocumentation(docId: string): Promise<{success: boolean, message: string}> {
+    const response = await api.delete(`/training/documentation/${docId}`);
     return response.data;
   },
 
   // Question methods
-  async getQuestions(connectionId: string): Promise<{questions: TrainingQuestionSql[], total: number, connection_id: string}> {
-    const response = await api.get(`/connections/${connectionId}/questions`);
+  async getQuestions(modelId: string): Promise<{questions: ModelTrainingQuestion[], total: number, model_id: string}> {
+    const response = await api.get(`/training/models/${modelId}/questions`);
+    // The backend returns the questions array directly, so we need to wrap it
+    return {
+      questions: response.data,
+      total: response.data.length,
+      model_id: modelId
+    };
+  },
+
+  async createQuestion(modelId: string, data: QuestionCreateRequest): Promise<ModelTrainingQuestion> {
+    const response = await api.post(`/training/models/${modelId}/questions`, data);
     return response.data;
   },
 
-  async createQuestion(connectionId: string, data: QuestionCreateRequest): Promise<TrainingQuestionSql> {
-    const response = await api.post(`/connections/${connectionId}/questions`, data);
+  async updateQuestion(questionId: string, data: QuestionUpdateRequest): Promise<ModelTrainingQuestion> {
+    const response = await api.put(`/training/questions/${questionId}`, data);
     return response.data;
   },
 
-  async updateQuestion(connectionId: string, questionId: string, data: QuestionUpdateRequest): Promise<TrainingQuestionSql> {
-    const response = await api.put(`/connections/${connectionId}/questions/${questionId}`, data);
+  async deleteQuestion(questionId: string): Promise<{success: boolean, message: string}> {
+    const response = await api.delete(`/training/questions/${questionId}`);
     return response.data;
   },
 
-  async deleteQuestion(connectionId: string, questionId: string): Promise<{success: boolean, message: string}> {
-    const response = await api.delete(`/connections/${connectionId}/questions/${questionId}`);
+  // Column methods
+  async getColumns(modelId: string): Promise<{columns: ModelTrainingColumn[], total: number, model_id: string}> {
+    const response = await api.get(`/training/models/${modelId}/columns`);
     return response.data;
+  },
+
+  async createColumn(modelId: string, data: ColumnCreateRequest): Promise<ModelTrainingColumn> {
+    const response = await api.post(`/training/models/${modelId}/columns`, data);
+    return response.data;
+  },
+
+  async updateColumn(columnId: string, data: ColumnUpdateRequest): Promise<ModelTrainingColumn> {
+    const response = await api.put(`/training/columns/${columnId}`, data);
+    return response.data;
+  },
+
+  async deleteColumn(columnId: string): Promise<{success: boolean, message: string}> {
+    const response = await api.delete(`/training/columns/${columnId}`);
+    return response.data;
+  },
+
+  // AI Generation methods
+  async generateColumnDescriptions(modelId: string, scope: 'column' | 'table' | 'all', tableName?: string, columnName?: string, additionalInstructions?: string): Promise<{success: boolean, generated_count: number, error_message?: string, generated_descriptions?: any}> {
+    const params = new URLSearchParams();
+    params.append('scope', scope);
+    if (tableName) params.append('table_name', tableName);
+    if (columnName) params.append('column_name', columnName);
+    if (additionalInstructions) params.append('additional_instructions', additionalInstructions);
+    
+    const response = await api.post(`/training/models/${modelId}/generate-column-descriptions?${params.toString()}`);
+    return response.data;
+  },
+
+  async generateTableDescriptions(modelId: string, tableName?: string, additionalInstructions?: string): Promise<{success: boolean, generated_count: number, error_message?: string, generated_descriptions?: any}> {
+    const params = new URLSearchParams();
+    if (tableName) params.append('table_name', tableName);
+    if (additionalInstructions) params.append('additional_instructions', additionalInstructions);
+    
+    const response = await api.post(`/training/models/${modelId}/generate-table-descriptions?${params.toString()}`);
+    console.log('🔍 Frontend service - Raw response:', response);
+    console.log('🔍 Frontend service - Response data:', response.data);
+    console.log('🔍 Frontend service - generated_descriptions in response:', response.data.generated_descriptions);
+    return response.data;
+  },
+
+  async generateAllDescriptions(modelId: string, additionalInstructions?: string): Promise<{success: boolean, generated_count: number, error_message?: string, generated_descriptions?: any}> {
+    const params = new URLSearchParams();
+    if (additionalInstructions) params.append('additional_instructions', additionalInstructions);
+    
+    const response = await api.post(`/training/models/${modelId}/generate-all-descriptions?${params.toString()}`);
+    return response.data;
+  },
+
+  async generateAllDescriptionsSSE(modelId: string, additionalInstructions?: string): Promise<string> {
+    const params = new URLSearchParams();
+    if (additionalInstructions) params.append('additional_instructions', additionalInstructions);
+    
+    // Return the SSE stream URL (GET request)
+    return `${api.defaults.baseURL}/training/models/${modelId}/generate-all-descriptions-sse?${params.toString()}`;
+  },
+
+  // Validate training question
+  async validateQuestion(questionId: string): Promise<{
+    success: boolean;
+    is_validated: boolean;
+    validation_notes: string;
+    execution_result?: any[];
+    message: string;
+  }> {
+    try {
+      const response = await api.post(`/training/questions/${questionId}/validate`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to validate training question:', error);
+      throw error;
+    }
+  },
+
+  // Generate SQL from Questions
+  async generateSqlFromQuestions(modelId: string, questions: string[], scope?: {tables: string[], columns: {[table: string]: string[]}}): Promise<{
+    success: boolean;
+    generated_sql: Array<{question: string, sql: string, error?: string}>;
+    message: string;
+  }> {
+    try {
+      const request = {
+        questions,
+        scope
+      };
+      const response = await api.post(`/training/models/${modelId}/generate-sql`, request);
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to generate SQL from questions:', error);
+      throw error;
+    }
+  },
+
+  // Enhanced Question Generation with SSE
+  async generateEnhancedQuestions(
+    modelId: string, 
+    scopeConfig: QuestionGenerationRequest,
+    onProgress?: (progress: QuestionGenerationProgress) => void
+  ): Promise<QuestionGenerationResponse> {
+    try {
+      const response = await api.post(`/training/models/${modelId}/generate-questions`, scopeConfig);
+      
+      // If there's a stream URL, set up SSE for real-time progress
+      if (response.data.stream_url) {
+        const eventSource = new EventSource(response.data.stream_url);
+        
+        eventSource.addEventListener('question_generated', (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (onProgress) {
+              onProgress({
+                current: data.example_number,
+                total: scopeConfig.num_questions,
+                generatedQuestions: [{
+                  id: `live-${data.example_number}`,
+                  question: data.question,
+                  sql: data.sql,
+                  involved_columns: data.involved_columns
+                }]
+              });
+            }
+          } catch (e) {
+            console.error('Error parsing SSE data:', e);
+          }
+        });
+
+        eventSource.addEventListener('generation_completed', (event) => {
+          console.log('✅ Question generation completed:', event.data);
+          eventSource.close();
+        });
+
+        eventSource.addEventListener('error', (event) => {
+          console.error('❌ SSE connection error:', event);
+          eventSource.close();
+        });
+      }
+      
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to generate enhanced questions:', error);
+      throw error;
+    }
   }
 };
+
+// Export individual functions for backward compatibility
+export const generateTrainingData = trainingService.generateTrainingData;
+export const trainModel = trainingService.trainModel;
+export const queryModel = trainingService.queryModel;
+export const getTaskStatus = trainingService.getTaskStatus;
+export const getUserTasks = trainingService.getUserTasks;
+export const getTrainingData = trainingService.getTrainingData;
+export const getDocumentation = trainingService.getDocumentation;
+export const createDocumentation = trainingService.createDocumentation;
+export const updateDocumentation = trainingService.updateDocumentation;
+export const deleteDocumentation = trainingService.deleteDocumentation;
+export const getQuestions = trainingService.getQuestions;
+export const createQuestion = trainingService.createQuestion;
+export const updateQuestion = trainingService.updateQuestion;
+export const deleteQuestion = trainingService.deleteQuestion;
+export const getColumns = trainingService.getColumns;
+export const createColumn = trainingService.createColumn;
+export const updateColumn = trainingService.updateColumn;
+export const deleteColumn = trainingService.deleteColumn;
+export const generateColumnDescriptions = trainingService.generateColumnDescriptions;
+export const generateTableDescriptions = trainingService.generateTableDescriptions;
+export const generateAllDescriptions = trainingService.generateAllDescriptions;
+export const generateAllDescriptionsSSE = trainingService.generateAllDescriptionsSSE;
+export const generateEnhancedQuestions = trainingService.generateEnhancedQuestions;
+export const generateSqlFromQuestions = trainingService.generateSqlFromQuestions;
+export const validateQuestion = trainingService.validateQuestion;

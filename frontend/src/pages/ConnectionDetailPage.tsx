@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Database, CheckCircle, AlertCircle, Clock, Zap, Play, Upload, Settings, FileText, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Database, CheckCircle, AlertCircle, Clock, Zap, Play, Upload, Settings, FileText, RefreshCw, Brain } from 'lucide-react';
 import { Connection } from '../types/chat';
 import { chatService } from '../services/chat';
 import { sseConnection } from '../services/sse';
 import { trainingService } from '../services/training';
 import { api } from '../services/auth';
-import { DocumentationTab } from '../components/connection/DocumentationTab';
-import { TrainingDataTab as TrainingDataTabComponent } from '../components/connection/TrainingDataTab';
-import { TrainingTab as TrainingTabComponent } from '../components/connection/TrainingTab';
+
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:6020';
 
@@ -58,16 +56,12 @@ export const ConnectionDetailPage: React.FC = () => {
 
   const getStatusInfo = (status: string) => {
     switch (status) {
-      case 'trained':
-        return { icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100', text: 'Trained' };
-      case 'training':
-        return { icon: Zap, color: 'text-yellow-600', bg: 'bg-yellow-100', text: 'Training' };
-      case 'data_generated':
-        return { icon: Play, color: 'text-blue-600', bg: 'bg-blue-100', text: 'Ready to Train' };
       case 'test_success':
-        return { icon: CheckCircle, color: 'text-blue-600', bg: 'bg-blue-100', text: 'Connected' };
-      case 'generating_data':
-        return { icon: Clock, color: 'text-yellow-600', bg: 'bg-yellow-100', text: 'Generating Data' };
+        return { icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100', text: 'Connected' };
+      case 'test_failed':
+        return { icon: AlertCircle, color: 'text-red-600', bg: 'bg-red-100', text: 'Failed' };
+      case 'connecting':
+        return { icon: Clock, color: 'text-blue-600', bg: 'bg-blue-100', text: 'Testing' };
       default:
         return { icon: AlertCircle, color: 'text-gray-600', bg: 'bg-gray-100', text: 'Unknown' };
     }
@@ -75,10 +69,7 @@ export const ConnectionDetailPage: React.FC = () => {
 
   const tabs = [
     { id: 'details', label: 'Details', icon: Database, description: 'Connection information and settings' },
-    { id: 'schema-descriptions', label: 'Schema & Descriptions', icon: Settings, description: 'Table structure and column descriptions' },
-    { id: 'documentation', label: 'Documentation', icon: FileText, description: 'General documentation and guides' },
-    { id: 'training-data', label: 'Training Data', icon: Play, description: 'Question-SQL pairs and examples' },
-    { id: 'training', label: 'Training', icon: Zap, description: 'Train and manage AI model' }
+    { id: 'schema-descriptions', label: 'Schema & Descriptions', icon: Settings, description: 'Table structure and column descriptions' }
   ];
 
   if (loading) {
@@ -119,12 +110,6 @@ export const ConnectionDetailPage: React.FC = () => {
         return <DetailsTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       case 'schema-descriptions':
         return <SchemaDescriptionsTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
-      case 'documentation':
-        return <DocumentationTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
-      case 'training-data':
-        return <TrainingDataTabComponent connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
-      case 'training':
-        return <TrainingTabComponent connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       default:
         return null;
     }
@@ -161,18 +146,14 @@ export const ConnectionDetailPage: React.FC = () => {
             
             {/* Right side with actions and status */}
             <div className="flex items-center gap-3">
-              {/* Use in Chat button if trained */}
-              {connection.status === 'trained' && (
-                <button
-                  onClick={() => navigate('/', { state: { selectedConnectionId: connection.id } })}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  <svg width={16} height={16} fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
-                  </svg>
-                  Use in Chat
-                </button>
-              )}
+              {/* Create Model button */}
+              <button
+                onClick={() => navigate('/models', { state: { createFromConnection: connection.id } })}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                <Brain size={16} />
+                Create Model
+              </button>
               
               {/* Status badge */}
               <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${statusInfo.bg} ${statusInfo.color}`}>
@@ -393,10 +374,6 @@ const DetailsTab: React.FC<{ connection: Connection; onConnectionUpdate: (connec
             <div className="p-3 bg-gray-50 rounded-lg text-gray-900">{connection.database_name}</div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Table</label>
-            <div className="p-3 bg-gray-50 rounded-lg text-gray-900">{connection.table_name}</div>
-          </div>
-          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Driver</label>
             <div className="p-3 bg-gray-50 rounded-lg text-gray-900">{connection.driver}</div>
           </div>
@@ -411,34 +388,32 @@ const DetailsTab: React.FC<{ connection: Connection; onConnectionUpdate: (connec
 
       {/* Statistics */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Usage Statistics</h2>
+        <h2 className="text-lg font-medium text-gray-900 mb-4">Connection Information</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{connection.total_queries}</div>
-            <div className="text-sm text-gray-500">Total Queries</div>
+            <div className="text-2xl font-bold text-blue-600">{connection.database_name}</div>
+            <div className="text-sm text-gray-500">Database</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">{connection.generated_examples_count}</div>
-            <div className="text-sm text-gray-500">Training Examples</div>
+            <div className="text-2xl font-bold text-green-600">{connection.driver}</div>
+            <div className="text-sm text-gray-500">Driver</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600">
-              {connection.column_descriptions_uploaded ? 'Yes' : 'No'}
-            </div>
-            <div className="text-sm text-gray-500">Column Descriptions</div>
+            <div className="text-2xl font-bold text-purple-600">{connection.server}</div>
+            <div className="text-sm text-gray-500">Server</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-orange-600">
-              {connection.last_queried_at ? new Date(connection.last_queried_at).toLocaleDateString() : 'Never'}
+              {new Date(connection.created_at).toLocaleDateString()}
             </div>
-            <div className="text-sm text-gray-500">Last Queried</div>
+            <div className="text-sm text-gray-500">Created</div>
           </div>
         </div>
       </div>
 
-      {/* Training Timeline */}
+      {/* Connection Timeline */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Training Timeline</h2>
+        <h2 className="text-lg font-medium text-gray-900 mb-4">Connection Timeline</h2>
         <div className="space-y-4">
           <div className="flex items-center gap-4">
             <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
@@ -454,11 +429,11 @@ const DetailsTab: React.FC<{ connection: Connection; onConnectionUpdate: (connec
           
           <div className="flex items-center gap-4">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-              connection.generated_examples_count > 0 
+              connection.status === 'test_success' 
                 ? 'bg-green-100' 
                 : 'bg-gray-100'
             }`}>
-              {connection.generated_examples_count > 0 ? (
+              {connection.status === 'test_success' ? (
                 <CheckCircle size={16} className="text-green-600" />
               ) : (
                 <Clock size={16} className="text-gray-400" />
@@ -466,41 +441,14 @@ const DetailsTab: React.FC<{ connection: Connection; onConnectionUpdate: (connec
             </div>
             <div className="flex-1">
               <div className={`font-medium ${
-                connection.generated_examples_count > 0 ? 'text-gray-900' : 'text-gray-500'
+                connection.status === 'test_success' ? 'text-gray-900' : 'text-gray-500'
               }`}>
-                Training Data Generated (Optional)
+                Connection Tested
               </div>
               <div className="text-sm text-gray-500">
-                {connection.generated_examples_count > 0 
-                  ? `${connection.generated_examples_count} examples created`
-                  : 'Can train with schema only'
-                }
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-              connection.status === 'trained' 
-                ? 'bg-green-100' 
-                : 'bg-gray-100'
-            }`}>
-              {connection.status === 'trained' ? (
-                <CheckCircle size={16} className="text-green-600" />
-              ) : (
-                <Clock size={16} className="text-gray-400" />
-              )}
-            </div>
-            <div className="flex-1">
-              <div className={`font-medium ${
-                connection.status === 'trained' ? 'text-gray-900' : 'text-gray-500'
-              }`}>
-                Model Training Completed
-              </div>
-              <div className="text-sm text-gray-500">
-                {connection.trained_at 
-                  ? new Date(connection.trained_at).toLocaleString()
-                  : 'Ready to train'
+                {connection.status === 'test_success' 
+                  ? 'Connection is working properly'
+                  : 'Ready to test connection'
                 }
               </div>
             </div>
@@ -519,7 +467,6 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
   const [columnDescriptions, setColumnDescriptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [generatingDescriptions, setGeneratingDescriptions] = useState(false);
   const [uploadingCsv, setUploadingCsv] = useState(false);
   const [editingColumn, setEditingColumn] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -627,159 +574,6 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
     }
   };
 
-  const generateAllDescriptions = async () => {
-    setGeneratingDescriptions(true);
-    setError(null);
-    
-    try {
-      console.log('🤖 Starting AI description generation...');
-      
-      const response = await api.post(`/connections/${connection.id}/generate-column-descriptions`, {
-        overwrite_existing: true
-      });
-      
-      const result = response.data;
-      console.log('📡 Generation task started:', result);
-      
-      // If there's a stream_url, use SSE for real-time updates
-      if (result.stream_url) {
-        const fullStreamUrl = result.stream_url.startsWith('http') 
-          ? result.stream_url 
-          : `${API_BASE_URL}${result.stream_url}`;
-        
-        console.log('🔗 Connecting to generation SSE stream:', fullStreamUrl);
-        
-        sseConnection.connect(fullStreamUrl, {
-          onCustomEvent: (eventType, data) => {
-            console.log('🎯 Generation event:', eventType, data);
-            
-            if (eventType === 'description_generated') {
-              // Update individual column description in real-time
-              setColumnDescriptions(prev => {
-                const updated = [...prev];
-                const existingIndex = updated.findIndex(col => col.column_name === data.column_name);
-                
-                if (existingIndex >= 0) {
-                  updated[existingIndex] = {
-                    ...updated[existingIndex],
-                    description: data.description,
-                    has_description: true
-                  };
-                } else {
-                  updated.push({
-                    column_name: data.column_name,
-                    description: data.description,
-                    data_type: data.data_type,
-                    variable_range: data.variable_range,
-                    has_description: true
-                  });
-                }
-                
-                return updated;
-              });
-            }
-            if (eventType === 'generation_started') {
-              console.log('🚀 Generation started:', data);
-            } else if (eventType === 'generation_completed') {
-              console.log('✅ Generation completed:', data);
-              setGeneratingDescriptions(false);
-              
-              // Update connection status
-              onConnectionUpdate({
-                ...connection,
-                column_descriptions_uploaded: true
-              });
-              
-              // Reload descriptions immediately
-              loadSchemaAndDescriptions();
-            } else if (eventType === 'generation_failed' || eventType === 'generation_error') {
-              console.error('❌ Generation failed:', data);
-              setError(data.error || 'AI generation failed');
-              setGeneratingDescriptions(false);
-            }
-          },
-          
-          onCompleted: (data) => {
-            console.log('✅ Generation completed via onCompleted:', data);
-            setGeneratingDescriptions(false);
-            
-            // Update connection status
-            onConnectionUpdate({
-              ...connection,
-              column_descriptions_uploaded: true
-            });
-            
-            // Reload descriptions
-            loadSchemaAndDescriptions();
-          },
-          
-          onError: (data) => {
-            console.error('❌ Generation failed:', data);
-            setError(data.error || 'AI generation failed');
-            setGeneratingDescriptions(false);
-          }
-        }, 120000); // 2 minute timeout
-        
-      } else {
-        // Fallback: Simple polling
-        console.log('📊 No SSE stream, using polling...');
-        
-        const pollForCompletion = async () => {
-          let attempts = 0;
-          const maxAttempts = 30;
-          
-          while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            
-            try {
-              console.log(`🔄 Polling attempt ${attempts + 1}/${maxAttempts}...`);
-              const descriptionsResponse = await api.get(`/connections/${connection.id}/column-descriptions`);
-              
-              // Check if we have new descriptions (simple heuristic)
-              const newDescriptions = descriptionsResponse.data.column_descriptions || [];
-              interface ColumnDescription {
-                column_name: string;
-                description?: string;
-                data_type?: string;
-                has_description?: boolean;
-              }
-
-              // Then use it in the filter:
-              const descriptionsCount = newDescriptions.filter((col: ColumnDescription) => col.description && col.description.trim().length > 0).length;
-              
-              console.log(`📝 Found ${descriptionsCount} columns with descriptions`);
-              
-              if (descriptionsCount > 0) {
-                setColumnDescriptions(newDescriptions);
-                setGeneratingDescriptions(false);
-                
-                // Update connection status
-                onConnectionUpdate({
-                  ...connection,
-                  column_descriptions_uploaded: true
-                });
-                return;
-              }
-            } catch (e) {
-              console.log('📊 Polling error (continuing):', e);
-            }
-            
-            attempts++;
-          }
-          
-          throw new Error('AI generation timed out - please check manually');
-        };
-
-        await pollForCompletion();
-      }
-      
-    } catch (err: any) {
-      console.error('❌ Failed to generate descriptions:', err);
-      setError(err.response?.data?.detail || err.message);
-      setGeneratingDescriptions(false);
-    }
-  };
-
   const handleCsvUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -811,7 +605,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
       // Update connection status
       onConnectionUpdate({
         ...connection,
-        column_descriptions_uploaded: true
+        status: 'test_success'
       });
 
     } catch (err: any) {
@@ -838,9 +632,14 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
         });
       } else {
         // Create new column if it doesn't exist
+        // Find the column in the first table for now
+        const firstTableName = Object.keys(schemaData.schema)[0];
+        const firstTable = schemaData.schema[firstTableName];
+        const columnInfo = firstTable?.columns?.find((col: any) => col.column_name === columnName);
+        
         const response = await api.post(`/connections/${connection.id}/columns`, {
           column_name: columnName,
-          data_type: schemaData?.schema?.columns[columnName]?.data_type || "",
+          data_type: columnInfo?.data_type || "",
           description: description,
           description_source: "manual"
         });
@@ -866,9 +665,12 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
       columnDescriptions.forEach(col => {
         csvContent += `"${col.column_name}","${col.description || 'Add description here'}"\n`;
       });
-    } else if (schemaData?.schema?.columns) {
-      Object.keys(schemaData.schema.columns).forEach(columnName => {
-        csvContent += `"${columnName}","Add description here"\n`;
+    } else if (schemaData?.schema && Object.keys(schemaData.schema).length > 0) {
+      // Get columns from the first table
+      const firstTableName = Object.keys(schemaData.schema)[0];
+      const firstTable = schemaData.schema[firstTableName];
+      firstTable?.columns?.forEach((column: any) => {
+        csvContent += `"${column.column_name}","Add description here"\n`;
       });
     } else {
       csvContent += "EmployeeID,Unique identifier for each employee\n";
@@ -955,7 +757,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
           <div>
             <h2 className="text-lg font-medium text-gray-900">Schema & Descriptions</h2>
             <p className="text-gray-600">
-              Table structure and column descriptions for <strong>{connection.table_name}</strong>
+              Table structure and column descriptions for <strong>{connection.database_name}</strong>
             </p>
           </div>
           
@@ -967,8 +769,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
               Download CSV Template
             </button>
             
-            <label className="px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors cursor-pointer">
-              Upload CSV
+            <label className="cursor-pointer px-3 py-2 text-sm bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
               <input
                 type="file"
                 accept=".csv"
@@ -976,15 +777,8 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
                 className="hidden"
                 disabled={uploadingCsv}
               />
+              {uploadingCsv ? 'Uploading...' : 'Upload CSV'}
             </label>
-            
-            <button
-              onClick={generateAllDescriptions}
-              disabled={generatingDescriptions || !schemaData}
-              className="px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
-            >
-              {generatingDescriptions ? 'Generating...' : 'Generate All with AI'}
-            </button>
             
             <button
               onClick={refreshSchema}
@@ -1016,14 +810,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
           </div>
         )}
 
-        {generatingDescriptions && (
-          <div className="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-            <div className="flex items-center gap-2 text-purple-800">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
-              <span className="font-medium">Generating descriptions with AI...</span>
-            </div>
-          </div>
-        )}
+
       </div>
 
       {/* Schema Summary */}
@@ -1034,7 +821,7 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
           <div className="grid grid-cols-4 gap-4 mb-6">
             <div className="bg-blue-50 rounded-lg p-4">
               <div className="text-2xl font-bold text-blue-600">
-                {schemaData.schema?.table_info?.total_columns || 0}
+                {schemaData.total_columns || 0}
               </div>
               <div className="text-sm text-blue-700">Total Columns</div>
             </div>
@@ -1046,9 +833,9 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
             </div>
             <div className="bg-yellow-50 rounded-lg p-4">
               <div className="text-2xl font-bold text-yellow-600">
-                {schemaData.schema?.table_info?.sample_rows || 0}
+                {schemaData.total_tables || 0}
               </div>
-              <div className="text-sm text-yellow-700">Sample Rows</div>
+              <div className="text-sm text-yellow-700">Total Tables</div>
             </div>
             <div className="bg-purple-50 rounded-lg p-4">
               <div className="text-2xl font-bold text-purple-600">
@@ -1060,135 +847,142 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
         </div>
       )}
 
-      {/* Columns Table */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">Columns & Descriptions</h3>
-        
-        {schemaData?.schema?.columns ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-full border border-gray-200 rounded-lg">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/5">
-                    Column Name
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/6">
-                    Data Type
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/4">
-                    Values/Range
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-2/5">
-                    Description
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(schemaData.schema.columns).map(([columnName, columnInfo]: [string, any]) => {
-                  const description = columnDescriptions.find(col => col.column_name === columnName);
-                  const isEditing = editingColumn === columnName;
-                  
-                  return (
-                    <tr key={columnName} className="border-b hover:bg-gray-50">
-                      <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                        {columnName}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded font-mono">
-                          {formatDataType(columnInfo.data_type)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {renderColumnValue(columnInfo)}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {isEditing ? (
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              defaultValue={description?.description || ''}
-                              className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  const value = (e.target as HTMLInputElement).value;
-                                  updateDescription(columnName, value);
-                                  setEditingColumn(null);
-                                } else if (e.key === 'Escape') {
-                                  setEditingColumn(null);
-                                }
-                              }}
-                              onBlur={(e) => {
-                                const value = e.target.value;
-                                updateDescription(columnName, value);
-                                setEditingColumn(null);
-                              }}
-                              autoFocus
-                            />
-                          </div>
-                        ) : (
-                          <div 
-                            className="cursor-pointer hover:bg-gray-100 p-1 rounded min-h-[20px]"
-                            onClick={() => setEditingColumn(columnName)}
-                          >
-                            {description?.description ? (
-                              <span className="text-gray-900">{description.description}</span>
-                            ) : (
-                              <span className="text-gray-400 italic">Click to add description...</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="text-center py-8">
-            <Database size={48} className="mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Schema Data</h3>
-            <p className="text-gray-600 mb-4">
-              Click "Refresh Schema" to analyze your database structure.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Sample Data */}
-      {schemaData?.schema?.sample_data && schemaData.schema.sample_data.length > 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Sample Data</h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border border-gray-200 rounded-lg">
-              <thead className="bg-gray-50">
-                <tr>
-                  {Object.keys(schemaData.schema.sample_data[0]).map((header) => (
-                    <th key={header} className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b">
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {schemaData.schema.sample_data.map((row: any, index: number) => (
-                  <tr key={index} className="border-b hover:bg-gray-50">
-                    {Object.values(row).map((value: any, cellIndex: number) => (
-                      <td key={cellIndex} className="px-4 py-3 text-sm text-gray-700">
-                        {value === null ? (
-                          <span className="text-gray-400 italic">NULL</span>
-                        ) : (
-                          String(value)
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* Tables List */}
+      {schemaData?.schema && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Database Tables</h3>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Object.entries(schemaData.schema).map(([tableName, tableInfo]: [string, any]) => (
+              <div key={tableName} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
+                <h4 className="font-medium text-gray-900 mb-2">{tableName}</h4>
+                <div className="text-sm text-gray-600">
+                  <div>Schema: {tableInfo.schema_name}</div>
+                  <div>Type: {tableInfo.table_type}</div>
+                  <div>Columns: {tableInfo.columns?.length || 0}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
+
+      {/* Columns Table - Show first table's columns for now */}
+      {schemaData?.schema && Object.keys(schemaData.schema).length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">
+            Columns & Descriptions - {Object.keys(schemaData.schema)[0]}
+          </h3>
+          
+          {(() => {
+            const firstTableName = Object.keys(schemaData.schema)[0];
+            const firstTable = schemaData.schema[firstTableName];
+            const columns = firstTable?.columns || [];
+            
+            return columns.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="min-w-full border border-gray-200 rounded-lg">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/5">
+                        Column Name
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/6">
+                        Data Type
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-1/4">
+                        Nullable
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b w-2/5">
+                        Description
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {columns.map((columnInfo: any) => {
+                      const columnName = columnInfo.column_name;
+                      const description = columnDescriptions.find(col => col.column_name === columnName);
+                      const isEditing = editingColumn === columnName;
+                      
+                      return (
+                        <tr key={columnName} className="border-b hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                            {columnName}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded font-mono">
+                              {formatDataType(columnInfo.data_type)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            <span className={`px-2 py-1 text-xs rounded ${
+                              columnInfo.is_nullable 
+                                ? 'bg-yellow-100 text-yellow-800' 
+                                : 'bg-red-100 text-red-800'
+                            }`}>
+                              {columnInfo.is_nullable ? 'Nullable' : 'Not Null'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  defaultValue={description?.description || ''}
+                                  className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      const value = (e.target as HTMLInputElement).value;
+                                      updateDescription(columnName, value);
+                                      setEditingColumn(null);
+                                    } else if (e.key === 'Escape') {
+                                      setEditingColumn(null);
+                                    }
+                                  }}
+                                  onBlur={(e) => {
+                                    const value = (e.target as HTMLInputElement).value;
+                                    updateDescription(columnName, value);
+                                    setEditingColumn(null);
+                                  }}
+                                  autoFocus
+                                />
+                                <button
+                                  onClick={() => setEditingColumn(null)}
+                                  className="px-2 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600">
+                                  {description?.description || 'No description'}
+                                </span>
+                                <button
+                                  onClick={() => setEditingColumn(columnName)}
+                                  className="ml-2 px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+                                >
+                                  Edit
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                No columns found for this table.
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+
     </div>
   );
 };

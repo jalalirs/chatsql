@@ -1,0 +1,48 @@
+Generate {num_questions} natural language questions and their corresponding SQL queries using ONLY the specified columns from the table: {table_name}.
+
+Table Schema:
+{table_schema}
+
+Selected Columns to Use:
+{columns_list}
+
+Guidelines:
+- Use Microsoft SQL Server syntax (square brackets for identifiers, TOP N instead of LIMIT)
+- Questions should be realistic and varied (filtering, aggregation, sorting, etc.)
+- SQL should be correct and executable
+- Each question must use at least one of the specified columns
+- Do NOT use any columns not in the selected columns list
+- Include a mix of simple SELECT, WHERE conditions, ORDER BY, GROUP BY, and aggregate functions
+- Consider the data types and sample values when generating realistic questions
+- Use natural language in questions, not database terminology (e.g., "players who scored goals" not "players with line_item = 'Goals'")
+- Make questions sound conversational and business-focused
+- Translate database fields to business concepts:
+  * Generic metric fields = ask about the specific metric and its value
+  * Description fields = ask about the description of the metric
+  * Focus on what the data represents, not the database structure
+  * When you see generic field names, ask about the actual values they contain, not the field name itself
+  * Use the categorical values provided in the schema to understand what the field represents
+  * Convert raw database values to natural language
+  * Do not use quotes around values in questions - use natural language instead
+
+{additional_instructions_placeholder}
+
+IMPORTANT: Return your response as a valid JSON object with this exact structure:
+{{
+  "questions": [
+    {{
+      "question": "Natural language question here",
+      "sql": "SELECT statement here",
+      "involved_columns": [
+        {{
+          "table": "{table_name}",
+          "column": "column_name"
+        }}
+      ],
+      "query_type": "simple_select",
+      "difficulty": "easy"
+    }}
+  ]
+}}
+
+Generate exactly {num_questions} questions:

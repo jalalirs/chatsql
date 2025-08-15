@@ -3,19 +3,14 @@ export interface Connection {
   name: string;
   server: string;
   database_name: string;
-  username: string;  // ADD THIS
-  table_name: string;
+  username: string;
   driver?: string;
-  encrypt: boolean;  // ADD THIS
-  trust_server_certificate: boolean;  // ADD THIS
-  status: 'testing' | 'test_success' | 'test_failed' | 'generating_data' | 'data_generated' | 'training' | 'trained' | 'training_failed';
+  encrypt: boolean;
+  trust_server_certificate: boolean;
+  status: 'testing' | 'test_success' | 'test_failed';
   test_successful: boolean;
-  column_descriptions_uploaded: boolean;
-  generated_examples_count: number;
-  total_queries: number;
-  last_queried_at?: string;
   created_at: string;
-  trained_at?: string;
+  updated_at: string;
 }
   
   export interface Conversation {

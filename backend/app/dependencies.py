@@ -9,7 +9,7 @@ from jwt import PyJWTError as JWTError
 
 from datetime import datetime, timezone
 
-from app.core.database import get_async_db
+from app.core.database import AsyncSessionLocal
 from app.config import settings
 from app.models.database import User, UserSession
 from app.models.schemas import UserResponse
@@ -22,8 +22,15 @@ security = HTTPBearer(auto_error=False)
 # Database dependency
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get database session dependency"""
-    async for session in get_async_db():
-        yield session
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Database session error: {e}")
+            raise
+        finally:
+            await session.close()
 
 # Validate API key dependency
 async def validate_api_key():
@@ -99,6 +106,78 @@ async def get_current_user_optional(
         
     except Exception as e:
         logger.error(f"Error getting current user: {e}")
+        return None
+
+async def get_current_user_from_query(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+) -> Optional[User]:
+    """Get current user from JWT token in query parameter (for SSE endpoints)"""
+    token = request.query_params.get("token")
+    logger.info(f"🔍 get_current_user_from_query called with token: {token[:20] if token else 'None'}...")
+    
+    if not token:
+        logger.warning("❌ No token found in query parameters")
+        return None
+    
+    try:
+        # Decode JWT token
+        payload = jwt.decode(
+            token, 
+            settings.SECRET_KEY, 
+            algorithms=[settings.ALGORITHM]
+        )
+        
+        user_id: str = payload.get("sub")
+        token_jti: str = payload.get("jti")
+        
+        logger.info(f"🔍 Decoded token - user_id: {user_id}, token_jti: {token_jti}")
+        
+        if not user_id or not token_jti:
+            logger.warning("❌ Missing user_id or token_jti in token payload")
+            return None
+            
+    except jwt.ExpiredSignatureError:
+        logger.warning("❌ Token expired")
+        return None
+    except JWTError as e:
+        logger.warning(f"❌ JWT decode error: {e}")
+        return None
+    
+    # Get user from database
+    try:
+        result = await db.execute(
+            select(User).where(
+                User.id == user_id,
+                User.is_active == True
+            )
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            logger.warning(f"❌ User not found or inactive: {user_id}")
+            return None
+        
+        # Verify session is still active
+        session_result = await db.execute(
+            select(UserSession).where(
+                UserSession.user_id == user_id,
+                UserSession.token_jti == token_jti,
+                UserSession.is_active == True,
+                UserSession.expires_at > datetime.now(timezone.utc)
+            )
+        )
+        session = session_result.scalar_one_or_none()
+        
+        if not session:
+            logger.warning(f"❌ Session not found or expired for user: {user_id}")
+            return None
+        
+        logger.info(f"✅ Authentication successful for user: {user.email}")
+        return user
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting user from query token: {e}")
         return None
 
 async def get_current_user(

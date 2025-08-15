@@ -291,9 +291,6 @@ def validate_connection_data(connection_data) -> List[str]:
     if not ConnectionValidator.validate_username(connection_data.username):
         errors.append("Invalid username")
     
-    if not ConnectionValidator.validate_table_name(connection_data.table_name):
-        errors.append("Invalid table name")
-    
     if not connection_data.password or len(connection_data.password.strip()) == 0:
         errors.append("Password is required")
     

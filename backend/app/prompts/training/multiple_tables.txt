@@ -1,0 +1,39 @@
+Generate {num_questions} natural language questions and their corresponding SQL queries using JOIN operations between the following tables: {table_names}.
+
+Tables Schema:
+{table_schema}
+
+Available Tables and Columns:
+{columns_list}
+
+Guidelines:
+- Use Microsoft SQL Server syntax (square brackets for identifiers, TOP N instead of LIMIT)
+- Questions should involve JOIN operations between the specified tables
+- SQL should be correct and executable with proper JOIN syntax
+- Each question must use columns from at least two different tables
+- Include a mix of INNER JOIN, LEFT JOIN, and complex multi-table queries
+- Consider realistic business scenarios that would require joining these tables
+- Include filtering, aggregation, and sorting operations
+- Ensure proper table aliases and column qualification
+
+{additional_instructions_placeholder}
+
+IMPORTANT: Return your response as a valid JSON object with this exact structure:
+{{
+  "questions": [
+    {{
+      "question": "Natural language question here",
+      "sql": "SELECT statement with JOIN here",
+      "involved_columns": [
+        {{
+          "table": "table_name",
+          "column": "column_name"
+        }}
+      ],
+      "query_type": "join",
+      "difficulty": "medium"
+    }}
+  ]
+}}
+
+Generate exactly {num_questions} questions:

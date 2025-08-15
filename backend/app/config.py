@@ -5,13 +5,13 @@ import secrets
 
 class Settings(BaseSettings):
     # Application
-    APP_NAME: str = "Tex2SQL API"
+    APP_NAME: str = "ChatSQL API"
     DEBUG: bool = False
     VERSION: str = "1.0.0"
     DESCRIPTION: str = "Text-to-SQL AI Platform with real-time training and querying"
     
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/tex2sql"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/chatsql"
     
     # For future GCP deployment (commented out for now)
     # DATABASE_URL: str = "postgresql+asyncpg://user:password@/dbname?host=/cloudsql/project:region:instance"
@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = None
     SMTP_USE_TLS: bool = True
     EMAIL_FROM: Optional[str] = None
-    EMAIL_FROM_NAME: Optional[str] = "Tex2SQL Platform"
+    EMAIL_FROM_NAME: Optional[str] = "ChatSQL Platform"
     
     # Logging
     LOG_LEVEL: str = "INFO"

@@ -8,7 +8,7 @@ from app.core.database import create_tables, close_database
 from app.core.sse_manager import sse_manager
 from app.api import (
     authentication, user, events, connections, 
-    training, conversation, health
+    conversation, health, models, training
 )
 
 # Configure logging
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
-    logger.info("Starting Tex2SQL API")
+    logger.info("Starting ChatSQL API")
     
     # Validate settings
     validate_settings()
@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("Shutting down Tex2SQL API")
+    logger.info("Shutting down ChatSQL API")
     
     # Stop SSE manager
     await sse_manager.stop()
@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="Tex2SQL API",
+            title="ChatSQL API",
     description="Text-to-SQL AI Platform with real-time training and querying",
     version="1.0.0",
     lifespan=lifespan
@@ -71,8 +71,9 @@ app.include_router(user.router)
 
 # Core functionality routes (auth required)
 app.include_router(connections.router)
+app.include_router(models.router)
 app.include_router(conversation.router)
-app.include_router(training.router)
+app.include_router(training.router)  # Enable training endpoints
 
 # System routes
 app.include_router(events.router)
@@ -82,7 +83,7 @@ app.include_router(health.router)
 async def root():
     """Root endpoint"""
     return {
-        "message": "Tex2SQL API",
+        "message": "ChatSQL API",
         "version": "1.0.0",
         "status": "running",
         "features": [
@@ -116,7 +117,7 @@ async def health_check():
 async def api_info():
     """API information endpoint"""
     return {
-        "api_name": "Tex2SQL",
+        "api_name": "ChatSQL",
         "version": "1.0.0",
         "description": "Text-to-SQL AI Platform with user authentication",
         "endpoints": {

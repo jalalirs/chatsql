@@ -6,6 +6,8 @@ import { Register } from './components/auth/Register';
 import { ChatLayout } from './components/chat/ChatLayout';
 import { ConnectionsPage } from './pages/ConnectionsPage';
 import { ConnectionDetailPage } from './pages/ConnectionDetailPage';
+import { ModelsPage } from './pages/ModelsPage';
+import ModelDetailPage from './pages/ModelDetailPage';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 
 // Wrapper components to provide navigation props
@@ -44,6 +46,18 @@ function App() {
           <Route path="/connections/:id" element={
             <ProtectedRoute>
               <ConnectionDetailPage />
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/models" element={
+            <ProtectedRoute>
+              <ModelsPage />
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/models/:id" element={
+            <ProtectedRoute>
+              <ModelDetailPage />
             </ProtectedRoute>
           } />
           

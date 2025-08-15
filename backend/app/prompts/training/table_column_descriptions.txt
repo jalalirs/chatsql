@@ -1,0 +1,19 @@
+Generate clear, concise descriptions for all columns in the table: {table_name}
+
+Table columns with value information:
+{columns_text}
+
+Guidelines:
+- Be concise but informative (1-2 sentences max per column)
+- Explain what each column represents in business terms
+- Mention data type if relevant to understanding
+- Include the value range or sample values in your description when provided
+- Use clear, professional language
+
+{additional_instructions_placeholder}
+
+Format your response as:
+Column: [column_name]
+Description: [description]
+
+Generate descriptions for all columns: 
