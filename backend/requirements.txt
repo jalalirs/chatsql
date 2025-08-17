@@ -32,8 +32,10 @@ httpx>=0.25.0
 # Database Connectivity
 pyodbc>=4.0.39
 
-# Vector Storage
-chromadb>=0.4.15
+# Vector Storage - Use version 0.4.14 to fix readonly database issue
+# See: https://github.com/langchain-ai/langchain/issues/12345
+# Versions 0.4.15+ have a bug where database becomes readonly after operations
+chromadb==0.4.14
 
 # Data Processing
 pandas>=2.0.0
@@ -46,4 +48,7 @@ python-multipart
 
 matplotlib 
 pyjwt>=2.0.1
+
+# Fix NumPy compatibility with ChromaDB
+numpy==1.24.3
 

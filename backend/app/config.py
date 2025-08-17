@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-4"
+    OPENAI_EMBEDDING_MODEL: Optional[str] = None
     
     # Authentication & Security
     SECRET_KEY: str = secrets.token_urlsafe(32)  # Auto-generate if not provided
@@ -53,6 +54,7 @@ class Settings(BaseSettings):
     
     # Training Data Storage
     DATA_DIR: str = "data"
+    CHROMADB_BASE_PATH: str = "/app"  # Base path for ChromaDB storage (configurable for Docker vs local)
     
     # SSE Configuration
     SSE_HEARTBEAT_INTERVAL: int = 30  # seconds

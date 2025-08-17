@@ -68,117 +68,6 @@ class TrainingService:
             f"TrustServerCertificate={trust_cert_str};"
         )
     
-    async def generate_training_data(
-        self, 
-        db: AsyncSession,
-        user: User,
-        model_id: str, 
-        num_examples: int,
-        task_id: str
-    ) -> GeneratedDataResult:
-        """Generate training data for a user's model"""
-        sse_logger = SSELogger(sse_manager, task_id, "data_generation")
-        
-        try:
-            await sse_logger.info(f"Starting data generation for user {user.email}, model {model_id}")
-            await sse_logger.progress(5, "Verifying model ownership...")
-            
-            # Get model and verify ownership
-            model = await self._get_model_and_verify_ownership(db, model_id, user)
-            if not model:
-                raise ValueError(f"Model {model_id} not found or access denied for user {user.email}")
-            
-            # Get connection for database access
-            connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
-            if not connection:
-                raise ValueError(f"Connection not found for model {model_id}")
-            
-            # Get tracked tables for this model
-            tracked_tables = await self._get_model_tracked_tables(db, model_id)
-            if not tracked_tables:
-                raise ValueError(f"No tracked tables found for model {model_id}")
-            
-            await sse_logger.progress(10, f"Found {len(tracked_tables)} tracked tables")
-            
-            # Update model status
-            await self._update_model_status(db, model_id, ModelStatus.TRAINING)
-            
-            # Generate training data for each tracked table
-            total_generated = 0
-            failed_count = 0
-            
-            for table_info in tracked_tables:
-                try:
-                    await sse_logger.progress(20, f"Generating data for table: {table_info.table_name}")
-                    
-                    # Generate examples for this table
-                    table_examples = await self._generate_table_examples(
-                        db, connection, table_info, num_examples // len(tracked_tables), sse_logger
-                    )
-                    
-                    # Save examples to database
-                    saved_count = await self._save_training_examples(db, model_id, table_info.table_name, table_examples)
-                    total_generated += saved_count
-                    
-                    await sse_logger.progress(40, f"Generated {saved_count} examples for {table_info.table_name}")
-                    
-                except Exception as e:
-                    failed_count += 1
-                    await sse_logger.error(f"Failed to generate data for table {table_info.table_name}: {str(e)}")
-                    logger.error(f"Table generation failed for {table_info.table_name}: {e}")
-            
-            # Generate cross-table examples if multiple tables
-            if len(tracked_tables) > 1:
-                try:
-                    await sse_logger.progress(60, "Generating cross-table examples...")
-                    cross_table_examples = await self._generate_cross_table_examples(
-                        db, connection, tracked_tables, num_examples // 4, sse_logger
-                    )
-                    
-                    # Save cross-table examples
-                    cross_count = await self._save_training_examples(db, model_id, "cross_table", cross_table_examples)
-                    total_generated += cross_count
-                    
-                    await sse_logger.progress(80, f"Generated {cross_count} cross-table examples")
-                    
-                except Exception as e:
-                    await sse_logger.error(f"Failed to generate cross-table examples: {str(e)}")
-                    logger.error(f"Cross-table generation failed: {e}")
-            
-            # Update model status
-            await self._update_model_status(db, model_id, ModelStatus.DRAFT)
-            
-            await sse_logger.progress(100, f"Data generation completed: {total_generated} examples generated")
-            
-            return GeneratedDataResult(
-                success=True,
-                total_generated=total_generated,
-                failed_count=failed_count,
-                examples=[],
-                documentation=[],
-                generation_time=0.0
-            )
-            
-        except Exception as e:
-            error_msg = f"Training data generation failed: {str(e)}"
-            await sse_logger.error(error_msg)
-            logger.error(error_msg)
-            
-            # Update model status on failure
-            try:
-                await self._update_model_status(db, model_id, ModelStatus.DRAFT)
-            except:
-                pass
-
-            return GeneratedDataResult(
-                success=False,
-                total_generated=0,
-                failed_count=0,
-                examples=[],
-                documentation=[],
-                generation_time=0.0,
-                error_message=error_msg
-            )
     
     async def generate_column_descriptions(
         self,
@@ -565,7 +454,8 @@ class TrainingService:
                     'value_range_max': col.value_range_max,
                     'value_distinct_count': col.value_distinct_count,
                     'value_data_type': col.value_data_type,
-                    'value_sample_size': col.value_sample_size
+                    'value_sample_size': col.value_sample_size,
+                    'is_low_cardinality': col.value_is_low_cardinality
                 })
             
             return columns
@@ -590,16 +480,10 @@ class TrainingService:
             if not tracked_columns:
                 return {}
             
-            # First, analyze and store column value information for all columns
-            enhanced_columns = []
-            for col in tracked_columns:
-                logger.info(f"🔍 Analyzing values for column {col['column_name']} in table {table_name}")
-                value_analysis = await self._analyze_column_values(connection, table_name, col['column_name'], col['data_type'])
-                logger.info(f"🔍 Value analysis result for {col['column_name']}: {value_analysis}")
-                await self._update_column_value_information(db, model_id, table_name, col['column_name'], value_analysis)
-                enhanced_columns.append({**col, **value_analysis})
+            # The tracked_columns already contain the value analysis data, so use them directly
+            enhanced_columns = tracked_columns
             
-            # Build prompt for tracked column descriptions using stored value information
+            # Build prompt for tracked column descriptions using the value information already in the columns
             prompt = await self._build_table_column_descriptions_prompt(connection, table_name, enhanced_columns, additional_instructions)
             
             logger.info(f"🔍 AI Prompt for table {table_name}: {prompt}")
@@ -753,16 +637,30 @@ class TrainingService:
                 
                 # For categorical data (low distinct count or string types)
                 if distinct_count <= 50 or data_type.lower() in ['varchar', 'nvarchar', 'char', 'nchar']:
-                    # Get all distinct values (up to 20 for display)
-                    await asyncio.to_thread(cursor.execute, f"SELECT DISTINCT TOP 20 [{column_name}] FROM {table_name} WHERE [{column_name}] IS NOT NULL ORDER BY [{column_name}]")
-                    distinct_values = await asyncio.to_thread(cursor.fetchall)
-                    categories = [str(row[0]) for row in distinct_values if row[0] is not None]
-                    
-                    return {
-                        'categories': categories,
-                        'distinct_count': distinct_count,
-                        'is_categorical': True
-                    }
+                    # For columns with 30 or fewer distinct values, get ALL values
+                    if distinct_count <= 30:
+                        await asyncio.to_thread(cursor.execute, f"SELECT DISTINCT [{column_name}] FROM {table_name} WHERE [{column_name}] IS NOT NULL ORDER BY [{column_name}]")
+                        distinct_values = await asyncio.to_thread(cursor.fetchall)
+                        categories = [str(row[0]) for row in distinct_values if row[0] is not None]
+                        
+                        return {
+                            'categories': categories,
+                            'distinct_count': distinct_count,
+                            'is_categorical': True,
+                            'is_low_cardinality': True
+                        }
+                    else:
+                        # For columns with more than 30 distinct values, get a sample
+                        await asyncio.to_thread(cursor.execute, f"SELECT TOP 20 [{column_name}] FROM {table_name} WHERE [{column_name}] IS NOT NULL ORDER BY NEWID()")
+                        sample_values = await asyncio.to_thread(cursor.fetchall)
+                        categories = [str(row[0]) for row in sample_values if row[0] is not None]
+                        
+                        return {
+                            'categories': categories,
+                            'distinct_count': distinct_count,
+                            'is_high_cardinality': True,
+                            'sample_size': 20
+                        }
                 
                 # For numerical data
                 elif data_type.lower() in ['int', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'real', 'money', 'smallmoney']:
@@ -798,16 +696,30 @@ class TrainingService:
                 
                 # For high-cardinality string columns, get a sample
                 elif distinct_count > 50:
-                    await asyncio.to_thread(cursor.execute, f"SELECT TOP 20 [{column_name}] FROM {table_name} WHERE [{column_name}] IS NOT NULL ORDER BY NEWID()")
-                    sample_values = await asyncio.to_thread(cursor.fetchall)
-                    categories = [str(row[0]) for row in sample_values if row[0] is not None]
-                    
-                    return {
-                        'categories': categories,
-                        'distinct_count': distinct_count,
-                        'is_high_cardinality': True,
-                        'sample_size': 20
-                    }
+                    # For columns with 30 or fewer distinct values, get ALL values
+                    if distinct_count <= 30:
+                        await asyncio.to_thread(cursor.execute, f"SELECT DISTINCT [{column_name}] FROM {table_name} WHERE [{column_name}] IS NOT NULL ORDER BY [{column_name}]")
+                        distinct_values = await asyncio.to_thread(cursor.fetchall)
+                        categories = [str(row[0]) for row in distinct_values if row[0] is not None]
+                        
+                        return {
+                            'categories': categories,
+                            'distinct_count': distinct_count,
+                            'is_categorical': True,
+                            'is_low_cardinality': True
+                        }
+                    else:
+                        # For columns with more than 30 distinct values, get a sample
+                        await asyncio.to_thread(cursor.execute, f"SELECT TOP 20 [{column_name}] FROM {table_name} WHERE [{column_name}] IS NOT NULL ORDER BY NEWID()")
+                        sample_values = await asyncio.to_thread(cursor.fetchall)
+                        categories = [str(row[0]) for row in sample_values if row[0] is not None]
+                        
+                        return {
+                            'categories': categories,
+                            'distinct_count': distinct_count,
+                            'is_high_cardinality': True,
+                            'sample_size': 20
+                        }
                 
                 return {
                     'distinct_count': distinct_count
@@ -823,17 +735,24 @@ class TrainingService:
     def _get_column_value_info(self, column_info: Dict[str, Any]) -> str:
         """Get value information for a column from stored data"""
         try:
+            # Debug logging to see what data we're working with
+            logger.info(f"🔍 Column value info for {column_info.get('column_name', 'unknown')}: value_categories={column_info.get('value_categories')}, distinct_count={column_info.get('value_distinct_count')}, is_low_cardinality={column_info.get('is_low_cardinality')}")
+            
             # Check if we have stored value categories
-            if column_info.get('value_categories'):
+            if column_info.get('value_categories') and isinstance(column_info['value_categories'], list) and len(column_info['value_categories']) > 0:
                 categories = column_info['value_categories']
                 distinct_count = column_info.get('value_distinct_count', len(categories))
-                data_type = column_info.get('value_data_type', 'categorical')
                 
-                if data_type == 'high_cardinality':
-                    sample_size = column_info.get('value_sample_size', 20)
-                    return f"Categories (sample of {sample_size} from {distinct_count} distinct): {', '.join(map(str, categories))} ... and {distinct_count - sample_size} more"
+                # For low-cardinality categorical columns (30 or fewer), show ALL values
+                if column_info.get('is_low_cardinality', False) and distinct_count <= 30:
+                    result = f"Categories ({distinct_count} distinct): {', '.join(map(str, categories))}"
+                    logger.info(f"🔍 Generated low-cardinality value info: {result}")
+                    return result
                 else:
-                    return f"Categories ({distinct_count} distinct): {', '.join(map(str, categories))}"
+                    # For all categorical columns, show the categories
+                    result = f"Categories ({distinct_count} distinct): {', '.join(map(str, categories))}"
+                    logger.info(f"🔍 Generated categorical value info: {result}")
+                    return result
             
             # Check if we have stored range information (numerical data)
             if column_info.get('value_range_min') or column_info.get('value_range_max'):
@@ -842,16 +761,25 @@ class TrainingService:
                 distinct_count = column_info.get('value_distinct_count', 0)
                 
                 if min_val and max_val:
-                    return f"Range: {min_val} to {max_val} ({distinct_count} distinct values)"
+                    result = f"Range: {min_val} to {max_val} ({distinct_count} distinct values)"
+                    logger.info(f"🔍 Generated range value info: {result}")
+                    return result
                 elif min_val:
-                    return f"Min: {min_val} ({distinct_count} distinct values)"
+                    result = f"Min: {min_val} ({distinct_count} distinct values)"
+                    logger.info(f"🔍 Generated min value info: {result}")
+                    return result
                 elif max_val:
-                    return f"Max: {max_val} ({distinct_count} distinct values)"
+                    result = f"Max: {max_val} ({distinct_count} distinct values)"
+                    logger.info(f"🔍 Generated max value info: {result}")
+                    return result
             
             # Check if we have distinct count but no other info
             if column_info.get('value_distinct_count') and column_info['value_distinct_count'] > 0:
-                return f"Distinct values: {column_info['value_distinct_count']}"
+                result = f"Distinct values: {column_info['value_distinct_count']}"
+                logger.info(f"🔍 Generated distinct count value info: {result}")
+                return result
             
+            logger.info(f"🔍 No value info found for column {column_info.get('column_name', 'unknown')}")
             return ""
             
         except Exception as e:
@@ -962,7 +890,8 @@ class TrainingService:
                     'value_range_max': tracked_column.value_range_max,
                     'value_distinct_count': tracked_column.value_distinct_count,
                     'value_data_type': tracked_column.value_data_type,
-                    'value_sample_size': tracked_column.value_sample_size
+                    'value_sample_size': tracked_column.value_sample_size,
+                    'is_low_cardinality': tracked_column.value_is_low_cardinality
                 }
             
             return {}
@@ -1015,6 +944,9 @@ class TrainingService:
                     tracked_column.value_distinct_count = value_analysis['distinct_count']
                 if 'is_categorical' in value_analysis:
                     tracked_column.value_data_type = 'categorical'
+                    # Store low-cardinality flag for categorical columns with 30 or fewer distinct values
+                    if value_analysis.get('is_low_cardinality', False):
+                        tracked_column.value_is_low_cardinality = True
                 elif 'is_numerical' in value_analysis:
                     tracked_column.value_data_type = 'numerical'
                 elif 'is_temporal' in value_analysis:
@@ -1293,8 +1225,7 @@ class TrainingService:
                 training_question = ModelTrainingQuestion(
                     model_id=model_id,
                     question=example["question"],
-                    sql=example["sql"],
-                    table_name=table_name
+                    sql=example["sql"]
                 )
                 
                 db.add(training_question)
@@ -1720,29 +1651,32 @@ class TrainingService:
     async def get_model_training_columns(self, db: AsyncSession, model_id: str) -> List[ModelTrainingColumnResponse]:
         """Get training columns for a model"""
         try:
-            stmt = select(ModelTrainingColumn).where(
-                ModelTrainingColumn.model_id == model_id,
-                ModelTrainingColumn.is_active == True
-            ).order_by(ModelTrainingColumn.table_name, ModelTrainingColumn.column_name)
+            # Query model_tracked_columns instead of ModelTrainingColumn
+            stmt = select(ModelTrackedColumn, ModelTrackedTable).join(
+                ModelTrackedTable, ModelTrackedColumn.model_tracked_table_id == ModelTrackedTable.id
+            ).where(
+                ModelTrackedTable.model_id == model_id,
+                ModelTrackedColumn.is_tracked == True
+            ).order_by(ModelTrackedTable.table_name, ModelTrackedColumn.column_name)
             
             result = await db.execute(stmt)
-            columns = result.scalars().all()
+            rows = result.all()
             
             return [
                 ModelTrainingColumnResponse(
                     id=str(col.id),
-                    model_id=str(col.model_id),
-                    table_name=col.table_name,
+                    model_id=model_id,
+                    table_name=table.table_name,
                     column_name=col.column_name,
-                    data_type=col.data_type,
+                    data_type=col.value_data_type,
                     description=col.description,
-                    value_range=col.value_range,
-                    description_source=col.description_source,
-                    is_active=col.is_active,
+                    value_range=f"{col.value_range_min} to {col.value_range_max}" if col.value_range_min and col.value_range_max else (str(col.value_categories) if col.value_categories else "N/A"),
+                    description_source="tracked_column",
+                    is_active=True,
                     created_at=col.created_at,
-                    updated_at=col.updated_at
+                    updated_at=col.created_at
                 )
-                for col in columns
+                for col, table in rows
             ]
         except Exception as e:
             logger.error(f"Failed to get training columns: {e}")
@@ -1982,99 +1916,62 @@ class TrainingService:
             import uuid
             task_id = str(uuid.uuid4())
             
-            # Generate training data
-            result = await self.generate_training_data(
-                db=db,
-                user=user,
-                model_id=model_id,
-                num_examples=num_examples,
-                task_id=task_id
-            )
-            
-            if result.success:
-                # Now train the Vanna model with the generated data
-                try:
-                    logger.info(f"Starting Vanna training for model {model_id}")
-                    
-                    # Get the model to access its connection
-                    stmt = select(Model).where(Model.id == model_id)
-                    result_model = await db.execute(stmt)
-                    model = result_model.scalar_one_or_none()
-                    
-                    if not model:
-                        raise ValueError("Model not found")
-                    
-                    # Get model's connection and configuration for Vanna training
-                    from app.services.connection_service import connection_service
-                    
-                    # Get the model's connection
-                    connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
-                    if not connection:
-                        raise ValueError(f"Connection not found for model {model_id}")
-                    
-                    # Create database config
-                    from app.models.vanna_models import DatabaseConfig
-                    db_config = DatabaseConfig(
-                        server=connection.server,
-                        database_name=connection.database_name,
-                        username=connection.username,
-                        password=connection.password,
-                        driver=connection.driver or 'ODBC Driver 17 for SQL Server',
-                        encrypt=connection.encrypt,
-                        trust_server_certificate=connection.trust_server_certificate
-                    )
-                    
-                    # Create Vanna config
-                    from app.models.vanna_models import VannaConfig
-                    vanna_config = VannaConfig(
-                        api_key=settings.OPENAI_API_KEY,
-                        base_url=settings.OPENAI_BASE_URL,
-                        model=settings.OPENAI_MODEL
-                    )
-                    
-                    # Train the Vanna model
-                    await vanna_service.setup_and_train_vanna(
-                        model_id=model_id,
-                        db_config=db_config,
-                        vanna_config=vanna_config,
-                        retrain=True,
-                        user=user,
-                        db=db
-                    )
-                    
-                    logger.info(f"Vanna training completed for model {model_id}")
-                    
-                except Exception as vanna_error:
-                    logger.error(f"Vanna training failed for model {model_id}: {vanna_error}")
-                    # Update model status back to draft on Vanna training failure
-                    stmt = update(Model).where(Model.id == model_id).values(
-                        status=ModelStatus.DRAFT,
-                        updated_at=datetime.utcnow()
-                    )
-                    await db.execute(stmt)
-                    await db.commit()
-                    
-                    return {
-                        "success": False,
-                        "error": f"Vanna training failed: {str(vanna_error)}"
-                    }
+           
+            # Now train the Vanna model with the generated data
+            try:
+                logger.info(f"Starting Vanna training for model {model_id}")
                 
-                # Update model status to trained
-                stmt = update(Model).where(Model.id == model_id).values(
-                    status=ModelStatus.TRAINED,
-                    updated_at=datetime.utcnow()
+                # Get the model to access its connection
+                stmt = select(Model).where(Model.id == model_id)
+                result_model = await db.execute(stmt)
+                model = result_model.scalar_one_or_none()
+                
+                if not model:
+                    raise ValueError("Model not found")
+                
+                # Get model's connection and configuration for Vanna training
+                from app.services.connection_service import connection_service
+                
+                # Get the model's connection
+                connection = await connection_service.get_connection_by_id(db, str(model.connection_id))
+                if not connection:
+                    raise ValueError(f"Connection not found for model {model_id}")
+                
+                # Create database config
+                from app.models.vanna_models import DatabaseConfig
+                db_config = DatabaseConfig(
+                    server=connection.server,
+                    database_name=connection.database_name,
+                    username=connection.username,
+                    password=connection.password,
+                    driver=connection.driver or 'ODBC Driver 17 for SQL Server',
+                    encrypt=connection.encrypt,
+                    trust_server_certificate=connection.trust_server_certificate
                 )
-                await db.execute(stmt)
-                await db.commit()
                 
-                return {
-                    "success": True,
-                    "model_id": model_id,
-                    "total_generated": result.total_generated,
-                    "failed_count": result.failed_count
-                }
-            else:
-                # Update model status back to draft
+                # Create Vanna config
+                from app.models.vanna_models import VannaConfig
+                vanna_config = VannaConfig(
+                    api_key=settings.OPENAI_API_KEY,
+                    base_url=settings.OPENAI_BASE_URL,
+                    model=settings.OPENAI_MODEL
+                )
+                
+                # Train the Vanna model
+                await vanna_service.setup_and_train_vanna(
+                    model_id=model_id,
+                    db_config=db_config,
+                    vanna_config=vanna_config,
+                    retrain=True,
+                    user=user,
+                    db=db
+                )
+                
+                logger.info(f"Vanna training completed for model {model_id}")
+                
+            except Exception as vanna_error:
+                logger.error(f"Vanna training failed for model {model_id}: {vanna_error}")
+                # Update model status back to draft on Vanna training failure
                 stmt = update(Model).where(Model.id == model_id).values(
                     status=ModelStatus.DRAFT,
                     updated_at=datetime.utcnow()
@@ -2084,9 +1981,22 @@ class TrainingService:
                 
                 return {
                     "success": False,
-                    "error": result.error_message
+                    "error": f"Vanna training failed: {str(vanna_error)}"
                 }
             
+            # Update model status to trained
+            stmt = update(Model).where(Model.id == model_id).values(
+                status=ModelStatus.TRAINED,
+                updated_at=datetime.utcnow()
+            )
+            await db.execute(stmt)
+            await db.commit()
+            
+            return {
+                "success": True,
+                "model_id": model_id
+            }
+      
         except Exception as e:
             # Update model status back to draft on error
             try:

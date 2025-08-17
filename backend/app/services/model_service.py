@@ -513,6 +513,9 @@ class ModelService:
                                 column.value_distinct_count = value_analysis['distinct_count']
                             if 'is_categorical' in value_analysis:
                                 column.value_data_type = 'categorical'
+                                # Store low-cardinality flag for categorical columns with 30 or fewer distinct values
+                                if value_analysis.get('is_low_cardinality', False):
+                                    column.value_is_low_cardinality = True
                             elif 'is_numerical' in value_analysis:
                                 column.value_data_type = 'numerical'
                             elif 'is_temporal' in value_analysis:

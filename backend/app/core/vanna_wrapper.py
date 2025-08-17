@@ -35,13 +35,16 @@ class MyVanna(OpenAI_Chat, ChromaDB_VectorStore):
         chromadb_path = config.get("path", "./chroma")
         logger.info(f"ChromaDB path from config: {chromadb_path}")
         
-        # Create ChromaDB config for new client format
+        # Create ChromaDB config for new client format with explicit persistence settings
         chroma_config = {
             "path": chromadb_path,
-            "anonymized_telemetry": False
+            "anonymized_telemetry": False,
+            "is_persistent": True,
+            "allow_reset": True
         }
         
         logger.info(f"Setting ChromaDB path to: {chromadb_path}")
+        logger.info(f"ChromaDB config: {chroma_config}")
         
 
         
@@ -55,6 +58,9 @@ class MyVanna(OpenAI_Chat, ChromaDB_VectorStore):
         
         # Store the config for our overridden method
         self._vanna_config = config
+        
+        # Test ChromaDB write permissions after initialization
+        self._test_chromadb_write_permissions(chromadb_path)
         
         # Override the submit_prompt method to force use of configured model
         import types
@@ -167,4 +173,30 @@ class MyVanna(OpenAI_Chat, ChromaDB_VectorStore):
             
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
+            raise
+    
+    def _test_chromadb_write_permissions(self, chromadb_path: str):
+        """Test ChromaDB write permissions to ensure persistence is working"""
+        try:
+            logger.info(f"Testing ChromaDB write permissions at: {chromadb_path}")
+            
+            # Ensure directory exists
+            os.makedirs(chromadb_path, exist_ok=True)
+            
+            # Test file creation
+            test_file = os.path.join(chromadb_path, ".write_test")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            
+            # Test file reading
+            with open(test_file, 'r') as f:
+                content = f.read()
+            
+            # Clean up test file
+            os.remove(test_file)
+            
+            logger.info(f"✅ ChromaDB write permissions test passed at: {chromadb_path}")
+            
+        except Exception as e:
+            logger.error(f"❌ ChromaDB write permissions test failed at {chromadb_path}: {e}")
             raise

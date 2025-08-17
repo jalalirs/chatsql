@@ -17,7 +17,7 @@ export const ChatLayout: React.FC = () => {
   };
 
   const handleConversationCreated = (conversationId: string) => {
-    console.log('✅ Conversation created:', conversationId);
+    
     // Switch to the new conversation
     setActiveConversation(conversationId);
     // Refresh the sidebar to show new conversation

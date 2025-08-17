@@ -47,6 +47,7 @@ const ModelTables: React.FC<ModelTablesProps> = ({ model, onModelUpdate }) => {
             const trackedCol = trackedColumns.find(tc => tc.column_name === schemaCol.column_name);
             return {
               ...schemaCol,
+              id: trackedCol?.id || `temp-${schemaCol.column_name}`, // Preserve the tracked column ID or create temp ID
               is_tracked: trackedCol ? trackedCol.is_tracked : false,
               description: trackedCol?.description || ''
             };

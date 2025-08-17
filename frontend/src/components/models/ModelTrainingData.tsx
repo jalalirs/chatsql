@@ -514,7 +514,7 @@ const TrainingQuestions: React.FC<{
       
       // Load tracked tables
       const tables = await getModelTrackedTables(modelId);
-      console.log('🔍 Loaded tracked tables:', tables);
+
       setTrackedTables(tables);
       
       // Load columns for each tracked table
@@ -537,6 +537,7 @@ const TrainingQuestions: React.FC<{
             const trackedCol = trackedColumns.find(tc => tc.column_name === schemaCol.column_name);
             return {
               ...schemaCol,
+              id: trackedCol?.id || `temp-${schemaCol.column_name}`, // Preserve the tracked column ID or create temp ID
               is_tracked: trackedCol ? trackedCol.is_tracked : false,
               description: trackedCol?.description || '',
               schema_order: schemaCol.ordinal_position || 999 // Add schema order for sorting
@@ -567,8 +568,7 @@ const TrainingQuestions: React.FC<{
     try {
       setError(null);
              const response = await getQuestions(modelId);
-       console.log('🔍 Response from getQuestions:', response);
-       console.log('🔍 Questions array:', response.questions);
+       
        
        setQuestions(response.questions || []);
     } catch (err: any) {
@@ -1573,27 +1573,27 @@ const TablesSchema: React.FC<{
       const { getTableColumns } = await import('../../services/connections');
       
       const tables = await getModelTrackedTables(modelId);
-      console.log('🔍 Tracked tables:', tables);
+
       setTrackedTables(tables);
       
       // Get the model to access its connection_id
       const { getModel } = await import('../../services/models');
       const model = await getModel(modelId);
-      console.log('🔍 Model:', model);
+
       
       // For each tracked table, get its tracked columns (which now contain AI descriptions)
       for (const table of tables) {
         try {
           // Get tracked columns for this table
           const trackedColumns = await getModelTrackedColumns(modelId, table.id);
-          console.log(`🔍 Tracked columns for table ${table.table_name}:`, trackedColumns);
+
           
           // Get actual column data types from the database schema
           let actualColumns: any[] = [];
           try {
             if (model?.connection_id) {
               actualColumns = await getTableColumns(model.connection_id, table.table_name);
-              console.log(`🔍 Actual columns for table ${table.table_name}:`, actualColumns);
+
             }
           } catch (error) {
             console.error(`Failed to get actual columns for table ${table.table_name}:`, error);
@@ -1610,6 +1610,7 @@ const TablesSchema: React.FC<{
             const trackedCol = trackedColumns.find(tc => tc.column_name === schemaCol.column_name);
             return {
               ...schemaCol,
+              id: trackedCol?.id || `temp-${schemaCol.column_name}`, // Preserve the tracked column ID or create temp ID
               is_tracked: trackedCol ? trackedCol.is_tracked : false,
               description: trackedCol?.description || '',
               // Include value information fields from tracked columns
@@ -1640,7 +1641,7 @@ const TablesSchema: React.FC<{
             return orderA - orderB;
           });
           
-          console.log(`🔍 Table ${table.table_name} has ${tableColumnsData.length} columns for display`);
+
           setTableColumns(prev => ({
             ...prev,
             [table.id]: tableColumnsData
@@ -1679,7 +1680,7 @@ const TablesSchema: React.FC<{
         // Check if this is a temporary column (has temp- prefix in ID)
         if (columnToUpdate.id && columnToUpdate.id.startsWith('temp-')) {
           // This is a temporary column, we need to create a real training column first
-          console.log(`🔍 Creating real training column for ${columnToUpdate.column_name}`);
+
           const { createColumn } = await import('../../services/training');
           
           // Find the table name for this column
@@ -1743,28 +1744,22 @@ const TablesSchema: React.FC<{
 
   const handleGenerateAIDescription = async (tableId: string, columnName: string, dataType: string) => {
     try {
-      console.log('🔍 handleGenerateAIDescription called with:', { tableId, columnName, dataType });
+
       setSubmitting(true);
       
       // Find the column to update
       const columns = tableColumns[tableId];
       const columnToUpdate = columns.find((col: any) => col.column_name === columnName);
       
-      console.log('🔍 Found column to update:', columnToUpdate);
+
       
       if (columnToUpdate) {
         // Find the table name for this column
         const table = trackedTables.find(t => t.id === tableId);
-        console.log('🔍 Found table:', table);
+
         
         if (table) {
-          console.log('🔍 Calling generateColumnDescriptions with:', {
-            modelId,
-            scope: 'column',
-            tableName: table.table_name,
-            columnName,
-            additionalInstructions: additionalInstructionsColumns
-          });
+
           
           // Call the AI generation endpoint
           const { generateColumnDescriptions } = await import('../../services/training');
@@ -1777,10 +1772,10 @@ const TablesSchema: React.FC<{
             additionalInstructionsColumns
           );
           
-          console.log('🔍 generateColumnDescriptions result:', result);
+
           
           if (result.success) {
-            console.log('✅ Successfully generated AI description');
+
             // Update the local state with the new description instead of reloading
             setTableColumns(prevColumns => {
               const updatedColumns = { ...prevColumns };
@@ -1808,23 +1803,23 @@ const TablesSchema: React.FC<{
 
   const handleGenerateTableDescriptions = async (tableId: string) => {
     try {
-      console.log('🔍 handleGenerateTableDescriptions called with tableId:', tableId);
+
       setSubmitting(true);
       
       const table = trackedTables.find(t => t.id === tableId);
       if (table) {
         const { generateTableDescriptions } = await import('../../services/training');
         
-        console.log('🔍 Calling generateTableDescriptions with:', { modelId, tableName: table.table_name, additionalInstructionsColumns });
+
         const result = await generateTableDescriptions(modelId, table.table_name, additionalInstructionsColumns);
-        console.log('🔍 generateTableDescriptions result:', result);
+
         
         if (result.success) {
-          console.log('✅ Successfully generated table descriptions:', result.generated_count, 'descriptions generated');
+
           
           // Update the local state with the new descriptions instead of reloading
           if (result.generated_descriptions) {
-            console.log('🔍 Updating table columns with generated descriptions:', result.generated_descriptions);
+
             setTableColumns(prevColumns => {
               const updatedColumns = { ...prevColumns };
               if (updatedColumns[tableId]) {
@@ -1832,7 +1827,7 @@ const TablesSchema: React.FC<{
                   const tableDescriptions = result.generated_descriptions[table.table_name];
                   const newDescription = tableDescriptions ? tableDescriptions[col.column_name] : null;
                   if (newDescription) {
-                    console.log(`🔍 Updating column ${col.column_name} with description:`, newDescription);
+
                     return { ...col, description: newDescription };
                   }
                   return col;
@@ -1854,28 +1849,24 @@ const TablesSchema: React.FC<{
 
   const handleGenerateAllDescriptions = async () => {
     try {
-      console.log('🔍 handleGenerateAllDescriptions called');
-      console.log('🔍 modelId:', modelId);
-      console.log('🔍 additionalInstructionsColumns:', additionalInstructionsColumns);
+
       
       setSubmitting(true);
       
       const { generateAllDescriptionsSSE } = await import('../../services/training');
       const { sseConnection } = await import('../../services/sse');
-      console.log('🔍 generateAllDescriptionsSSE function imported');
+
       
       // Get the SSE stream URL
       const streamUrl = await generateAllDescriptionsSSE(modelId, additionalInstructionsColumns);
-      console.log('🔍 SSE stream URL:', streamUrl);
+
       
       // Connect to SSE stream
       sseConnection.connect(streamUrl, {
         onProgress: (data) => {
-          console.log('🔍 SSE Progress:', data);
           // You can add progress UI here if needed
         },
         onCompleted: (data) => {
-          console.log('✅ SSE Completed:', data);
           if (data.generated_count > 0) {
             // Update the local state with the new descriptions instead of reloading
             // The SSE response should include the generated descriptions
@@ -1959,9 +1950,7 @@ const TablesSchema: React.FC<{
     );
   }
 
-    // Debug logging
-  console.log('🔍 Rendering - trackedTables:', trackedTables);
-  console.log('🔍 Rendering - tableColumns:', tableColumns);
+
 
   return (
     <div className="space-y-6">
@@ -2000,8 +1989,7 @@ const TablesSchema: React.FC<{
       ) : (
         <div className="space-y-6">
           {trackedTables.map((table) => {
-            // Debug logging
-            console.log(`🔍 Rendering table ${table.table_name} with columns:`, tableColumns[table.id]);
+            
             return (
               <div key={table.id} className="border rounded-lg">
                 <div className="px-4 py-3 bg-gray-50 border-b flex justify-between items-center">
@@ -2034,9 +2022,8 @@ const TablesSchema: React.FC<{
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                       {tableColumns[table.id]?.length > 0 ? (
-                        tableColumns[table.id].map((column: any, index: number) => {
-                          console.log(`🔍 Rendering column ${column.column_name}:`, column);
-                          return (
+                                                 tableColumns[table.id].map((column: any, index: number) => {
+                           return (
                           <tr key={index}>
                             <td className="px-4 py-3 text-sm text-gray-900">
                               {column.column_name}

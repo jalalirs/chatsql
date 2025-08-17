@@ -325,6 +325,7 @@ class ConversationService:
                 "api_key": settings.OPENAI_API_KEY,
                 "base_url": settings.OPENAI_BASE_URL,
                 "model": settings.OPENAI_MODEL,
+                "embedding_model": settings.OPENAI_EMBEDDING_MODEL,
                 "path": chromadb_path
             }
             
@@ -373,7 +374,8 @@ class ConversationService:
             vanna_config = VannaConfig(
                 api_key=settings.OPENAI_API_KEY,
                 base_url=settings.OPENAI_BASE_URL,
-                model=settings.OPENAI_MODEL
+                model=settings.OPENAI_MODEL,
+                embedding_model=settings.OPENAI_EMBEDDING_MODEL
             )
             
             db_config = DatabaseConfig(

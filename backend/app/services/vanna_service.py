@@ -26,45 +26,28 @@ class VannaService:
         # NO instance caching - everything is stateless
     
     def _get_chromadb_path(self, model_id: str) -> str:
-        """Get the ChromaDB path for a model - always use timestamp for fresh training"""
-        timestamp = int(time.time())
-        return os.path.join(self.data_dir, "models", model_id, f"chromadb_store_{timestamp}")
+        """Get the ChromaDB path for a model - use configurable base path for flexibility"""
+        # Use configurable base path from settings for Docker/local flexibility
+        return os.path.join(settings.CHROMADB_BASE_PATH, "chroma_db", "models", model_id, "chromadb_store")
     
     def _get_latest_chromadb_path(self, model_id: str) -> str:
-        """Get the latest ChromaDB path for querying"""
-        model_dir = os.path.join(self.data_dir, "models", model_id)
-        if not os.path.exists(model_dir):
-            return None
-            
-        # Find the latest chromadb directory
-        chromadb_dirs = []
-        for item in os.listdir(model_dir):
-            if item.startswith('chromadb_store_'):
-                try:
-                    timestamp = int(item.split('_')[-1])
-                    chromadb_dirs.append((timestamp, os.path.join(model_dir, item)))
-                except ValueError:
-                    continue
-        
-        if not chromadb_dirs:
-            return None
-            
-        # Return the latest one
-        chromadb_dirs.sort(reverse=True)
-        return chromadb_dirs[0][1]
+        """Get the ChromaDB path for querying - use configurable base path"""
+        chromadb_path = os.path.join(settings.CHROMADB_BASE_PATH, "chroma_db", "models", model_id, "chromadb_store")
+        if os.path.exists(chromadb_path):
+            return chromadb_path
+        return None
     
     def _verify_clean_state(self, model_id: str) -> bool:
         """Verify that ChromaDB is completely clean"""
-        model_dir = os.path.join(self.data_dir, "models", model_id)
+        model_dir = os.path.join(settings.CHROMADB_BASE_PATH, "chroma_db", "models", model_id)
         
         if not os.path.exists(model_dir):
             return True
             
-        # Check for any chromadb_store directories
-        chromadb_dirs = [item for item in os.listdir(model_dir) if item.startswith('chromadb_store')]
-        
-        if chromadb_dirs:
-            logger.warning(f"Found {len(chromadb_dirs)} remaining ChromaDB directories: {chromadb_dirs}")
+        # Check for the single chromadb_store directory
+        chromadb_path = os.path.join(model_dir, "chromadb_store")
+        if os.path.exists(chromadb_path):
+            logger.warning(f"Found existing ChromaDB directory: {chromadb_path}")
             return False
             
         logger.info(f"Verified clean state for model {model_id}")
@@ -73,85 +56,65 @@ class VannaService:
     def _ensure_directory_writable(self, path: str) -> None:
         """Ensure directory exists and is writable with full permissions"""
         try:
+            # Create parent directory if it doesn't exist
+            parent_dir = os.path.dirname(path)
+            if parent_dir and not os.path.exists(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+                logger.info(f"Created parent directory: {parent_dir}")
+            
             # Remove directory if it exists to start completely fresh
             if os.path.exists(path):
                 logger.info(f"🔥 Removing existing directory for fresh start: {path}")
-                shutil.rmtree(path)
+                try:
+                    shutil.rmtree(path)
+                except PermissionError:
+                    # If we can't delete, try to remove contents instead
+                    logger.warning(f"Could not delete directory {path}, removing contents instead")
+                    for item in os.listdir(path):
+                        item_path = os.path.join(path, item)
+                        try:
+                            if os.path.isfile(item_path):
+                                os.unlink(item_path)
+                            elif os.path.isdir(item_path):
+                                shutil.rmtree(item_path)
+                        except PermissionError:
+                            logger.warning(f"Could not remove {item_path}, continuing...")
             
             # Create new directory with full permissions
             os.makedirs(path, exist_ok=True)
-            os.chmod(path, 0o777)  # Full permissions for all
             
-            # Set umask to ensure new files are created with write permissions
-            old_umask = os.umask(0o000)
+            # Try to set permissions, but don't fail if we can't
+            try:
+                os.chmod(path, 0o777)  # Full permissions for all
+            except PermissionError:
+                logger.warning(f"Could not set permissions on {path}, continuing...")
             
             # Test write permissions
             test_file = os.path.join(path, ".write_test")
-            with open(test_file, 'w') as f:
-                f.write("test")
-            os.chmod(test_file, 0o666)
-            os.remove(test_file)
-            
-            # Restore umask
-            os.umask(old_umask)
-            
-            logger.info(f"🔥 Directory confirmed writable with full permissions: {path}")
+            try:
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                os.remove(test_file)
+                logger.info(f"🔥 Directory confirmed writable: {path}")
+            except Exception as write_error:
+                logger.error(f"Directory not writable: {path}, error: {write_error}")
+                raise
+                
         except Exception as e:
             logger.error(f"Directory not writable: {path}, error: {e}")
             raise
+            raise
     
     def _force_cleanup_chromadb(self, model_id: str) -> None:
-        """Force cleanup of all ChromaDB directories for a model"""
-        model_dir = os.path.join(self.data_dir, "models", model_id)
-        
-        if os.path.exists(model_dir):
-            # Remove all chromadb_store directories
-            for item in os.listdir(model_dir):
-                if item.startswith('chromadb_store'):
-                    item_path = os.path.join(model_dir, item)
-                    try:
-                        shutil.rmtree(item_path)
-                        logger.info(f"Removed ChromaDB directory: {item_path}")
-                    except Exception as e:
-                        logger.error(f"Failed to remove ChromaDB directory {item_path}: {e}")
-        
-        logger.info(f"COMPLETE ChromaDB cleanup for model {model_id}")
-    
-    def _cleanup_old_chromadb_directories(self, model_id: str, keep_latest: int = 1) -> int:
-        """Clean up old ChromaDB directories, keeping only the latest N"""
-        model_dir = os.path.join(self.data_dir, "models", model_id)
-        
-        if not os.path.exists(model_dir):
-            return 0
-        
-        # Find all chromadb directories with timestamps
-        chromadb_dirs = []
-        for item in os.listdir(model_dir):
-            if item.startswith('chromadb_store_'):
-                try:
-                    timestamp = int(item.split('_')[-1])
-                    chromadb_dirs.append((timestamp, os.path.join(model_dir, item)))
-                except ValueError:
-                    continue
-        
-        if len(chromadb_dirs) <= keep_latest:
-            return 0
-        
-        # Sort by timestamp (oldest first)
-        chromadb_dirs.sort()
-        
-        # Remove oldest directories (keep the latest N)
-        removed_count = 0
-        for timestamp, dir_path in chromadb_dirs[:-keep_latest]:
-            try:
-                shutil.rmtree(dir_path)
-                logger.info(f"Removed old ChromaDB directory: {dir_path}")
-                removed_count += 1
-            except Exception as e:
-                logger.error(f"Failed to remove old ChromaDB directory {dir_path}: {e}")
-        
-        logger.info(f"Removed {removed_count} ChromaDB directories for model {model_id}")
-        return removed_count
+        """Force cleanup of ChromaDB directories"""
+        try:
+            model_dir = os.path.join(settings.CHROMADB_BASE_PATH, "chroma_db", "models", model_id)
+            if os.path.exists(model_dir):
+                logger.info(f"🔥 Force cleaning ChromaDB directory: {model_dir}")
+                shutil.rmtree(model_dir)
+                logger.info(f"🔥 ChromaDB directory cleaned: {model_dir}")
+        except Exception as e:
+            logger.error(f"Failed to force clean ChromaDB directory {model_dir}: {e}")
     
     async def setup_and_train_vanna(
         self,
@@ -261,7 +224,20 @@ class VannaService:
             if progress_callback:
                 await progress_callback(50, f"Training with {len(questions)} examples...")
             
+            # print the columns
+            
             # Convert to Vanna training data format
+            column_descriptions = []
+            for col in columns:
+                description_text = col.description or ""
+                if col.value_range:
+                    description_text += " " + col.value_range
+                column_descriptions.append({
+                    "table_name": col.table_name,
+                    "column_name": col.column_name,
+                    "data_type": col.data_type,
+                    "description": description_text
+                })
             training_data = VannaTrainingData(
                 documentation=[
                     TrainingDocumentation(
@@ -277,13 +253,16 @@ class VannaService:
                 ],
                 column_descriptions=[
                     {
-                        "table_name": col.table_name,
-                        "column_name": col.column_name,
-                        "data_type": col.data_type,
-                        "description": col.description or ""
-                    } for col in columns
+                        "table_name": col_desc["table_name"],
+                        "column_name": col_desc["column_name"],
+                        "data_type": col_desc["data_type"],
+                        "description": col_desc["description"]
+                    } for col_desc in column_descriptions
                 ]
             )
+
+            # print the training data
+            logger.info(f"q {training_data}")
             
             if not training_data.examples and not training_data.documentation:
                 logger.warning(f"No training data found for model {model_id}{user_info}")
@@ -314,68 +293,21 @@ class VannaService:
             # Train with column descriptions as documentation
             for col_desc in training_data.column_descriptions:
                 try:
-                    content = f"Column '{col_desc['column_name']}' ({col_desc['data_type']}): {col_desc['description']}"
+                    content = f"Table '{col_desc['table_name']}' has column '{col_desc['column_name']}' ({col_desc['data_type']}): {col_desc['description']}"
                     vanna_instance.train(documentation=content)
-                    logger.info(f"Trained column description: {col_desc['column_name']}")
+                    logger.info(f"Trained column description: {col_desc['table_name']}.{col_desc['column_name']}")
                 except Exception as e:
-                    logger.error(f"Failed to train column description {col_desc['column_name']}: {e}")
+                    logger.error(f"Failed to train column description {col_desc['table_name']}.{col_desc['column_name']}: {e}")
             
-            # Train with database schema (DDL) - CRITICAL MISSING STEP!
-            if db:
+            # Add table-level training data to make table names more prominent
+            table_names = list(set([col_desc['table_name'] for col_desc in training_data.column_descriptions]))
+            for table_name in table_names:
                 try:
-                    # Get the model's tracked tables and columns directly
-                    from app.models.database import Model, ModelTrackedTable, ModelTrackedColumn
-                    from sqlalchemy import select
-                    
-                    # Get tracked tables for this model
-                    tables_result = await db.execute(
-                        select(ModelTrackedTable)
-                        .where(ModelTrackedTable.model_id == model_id, ModelTrackedTable.is_active == True)
-                    )
-                    tracked_tables = tables_result.scalars().all()
-                    
-                    if tracked_tables:
-                        logger.info(f"Training with {len(tracked_tables)} tracked tables")
-                        
-                        for tracked_table in tracked_tables:
-                            try:
-                                # Get columns for this table
-                                columns_result = await db.execute(
-                                    select(ModelTrackedColumn)
-                                    .where(ModelTrackedColumn.model_tracked_table_id == tracked_table.id)
-                                )
-                                tracked_columns = columns_result.scalars().all()
-                                
-                                # Create DDL-like documentation for the table
-                                columns_info = []
-                                for col in tracked_columns:
-                                    if col.is_tracked:
-                                        col_info = f"[{col.column_name}]"
-                                        if col.value_data_type:
-                                            col_info += f" ({col.value_data_type})"
-                                        if col.description:
-                                            col_info += f" - {col.description}"
-                                        columns_info.append(col_info)
-                                
-                                if columns_info:
-                                    # Create table DDL documentation
-                                    full_table_name = f"{tracked_table.schema_name}.{tracked_table.table_name}" if tracked_table.schema_name else tracked_table.table_name
-                                    ddl_doc = f"Table {full_table_name}:\n" + "\n".join(columns_info)
-                                    
-                                    # Train with this table's DDL
-                                    vanna_instance.train(documentation=ddl_doc)
-                                    logger.info(f"Trained DDL for table: {full_table_name}")
-                                
-                            except Exception as e:
-                                logger.error(f"Failed to train DDL for table {tracked_table.table_name}: {e}")
-                    else:
-                        logger.warning(f"No tracked tables found for model {model_id}")
-                        
+                    table_content = f"Table '{table_name}' contains player statistics and performance data."
+                    vanna_instance.train(documentation=table_content)
+                    logger.info(f"Trained table description: {table_name}")
                 except Exception as e:
-                    logger.error(f"Failed to train database schema (DDL): {e}")
-                    # Don't fail training if DDL training fails, just log it
-            else:
-                logger.warning("No database session available for DDL training")
+                    logger.error(f"Failed to train table description {table_name}: {e}")
             
             if progress_callback:
                 await progress_callback(100, "Training completed successfully")
@@ -410,6 +342,7 @@ class VannaService:
                 "api_key": settings.OPENAI_API_KEY,
                 "base_url": settings.OPENAI_BASE_URL,
                 "model": settings.OPENAI_MODEL,
+                "embedding_model": settings.OPENAI_EMBEDDING_MODEL,
                 "path": chromadb_path
             }
             
@@ -457,14 +390,10 @@ class VannaService:
             # Clean up ChromaDB directories
             self._force_cleanup_chromadb(model_id)
             
-            # Clean up training data files
-            training_data_path = os.path.join(self.data_dir, "models", model_id, "generated_training_data.json")
-            if os.path.exists(training_data_path):
-                os.remove(training_data_path)
-                logger.info(f"Cleaned up training data for model {model_id}{user_info}")
+        
             
             # Remove model directory if empty
-            model_dir = os.path.join(self.data_dir, "models", model_id)
+            model_dir = os.path.join(settings.CHROMADB_BASE_PATH, "chroma_db", "models", model_id)
             if os.path.exists(model_dir) and not os.listdir(model_dir):
                 os.rmdir(model_dir)
                 logger.info(f"Removed empty model directory for {model_id}{user_info}")

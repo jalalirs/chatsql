@@ -47,7 +47,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
         window.history.replaceState({}, document.title);
         
         // Optional: Show a toast or notification
-        console.log(`✅ Connection "${connection.name}" selected and ready for chat!`);
+  
       }
     }
   }, [location.state, connections]);
@@ -76,7 +76,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       const shouldSkipLoad = justCreatedConversation === activeConversation && messages.length > 0;
       
       if (shouldSkipLoad) {
-        console.log('✅ Skipping reload for just-created conversation with existing messages');
+  
         setJustCreatedConversation(null); // Reset the flag
         return;
       }
@@ -121,7 +121,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
     setLoadingMessages(true);
     
     try {
-      console.log('🔍 Loading conversation:', activeConversation);
+
       // This call is safe here because activeConversation is guaranteed to be a string
       const conversationWithMessages = await chatService.getConversationWithMessages(activeConversation);
       console.log('📨 Loaded conversation data:', conversationWithMessages);
@@ -179,11 +179,11 @@ export const ChatMain: React.FC<ChatMainProps> = ({
     console.log('💬 handleSendMessage called with:', { message, loading, selectedConnection, activeConversation });
     
     if (!message.trim() || loading || !selectedConnection) {
-      console.log('❌ Aborting send - conditions not met');
+
       return;
     }
 
-    console.log('✅ Proceeding with message send...');
+    
 
     // For new conversations, create conversation first
     let conversationId = activeConversation;
@@ -198,7 +198,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
         );
         conversationId = newConversation.id;
         isNewConversation = true;
-        console.log('✅ New conversation created:', conversationId);
+  
         
         // Update conversation data
         setConversationData(newConversation);
@@ -245,7 +245,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           let connected = false;
           
           eventSource.onopen = () => {
-            console.log('✅ EventSource opened successfully');
+      
             connected = true;
           };
           
@@ -345,7 +345,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           });
           
           eventSource.addEventListener('sql_execution_failed', (event) => {
-            console.log('❌ SQL execution failed event:', event.data);
+
             try {
               const data = JSON.parse(event.data);
               setMessages(prev => prev.map(msg => 
@@ -382,7 +382,6 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           });
           
           eventSource.addEventListener('query_completed', (event) => {
-            console.log('✅ Query completed event:', event.data);
             try {
               const data = JSON.parse(event.data);
               setLoading(false);
@@ -438,7 +437,6 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           });
           
           eventSource.addEventListener('query_completed', (event) => {
-            console.log('✅ Query completed event:', event.data);
             try {
               const data = JSON.parse(event.data);
               
@@ -475,7 +473,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           });
 
           eventSource.addEventListener('query_error', (event) => {
-            console.log('❌ Query error event:', event.data);
+
             try {
               const data = JSON.parse(event.data);
               setMessages(prev => prev.map(msg => 

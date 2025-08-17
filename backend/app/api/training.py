@@ -56,38 +56,6 @@ async def train_model(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to train model: {str(e)}")
 
-@router.post("/models/{model_id}/generate-data")
-async def generate_training_data(
-    model_id: UUID = Path(..., description="Model ID"),
-    num_examples: int = Query(50, ge=1, le=200, description="Number of examples to generate"),
-    background_tasks: BackgroundTasks = None,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
-):
-    """Generate training data for a model"""
-    try:
-        result = await training_service.generate_training_data(
-            db=db,
-            user=current_user,
-            model_id=str(model_id),
-            num_examples=num_examples,
-            task_id=str(model_id)  # For now, using model_id as task_id
-        )
-        
-        if not result.success:
-            raise HTTPException(status_code=400, detail=result.error_message)
-        
-        return {
-            "success": True,
-            "model_id": str(model_id),
-            "total_generated": result.total_generated,
-            "failed_count": result.failed_count,
-            "message": f"Generated {result.total_generated} training examples"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate training data: {str(e)}")
 
 @router.post("/models/{model_id}/query", response_model=ModelQueryResponse)
 async def query_model(

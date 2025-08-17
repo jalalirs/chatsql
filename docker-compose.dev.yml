@@ -24,7 +24,7 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     ports:
       - "6020:6020"
     env_file:
@@ -37,6 +37,7 @@ services:
       - ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - CHROMADB_BASE_PATH=/app
     depends_on:
       - postgres
       - mssql
@@ -44,6 +45,8 @@ services:
       - ./backend:/app
       - ./backend/uploads:/app/uploads
       - ./backend/data:/app/data
+      - ./backend/chroma_db:/app/chroma_db
+      - ./backend/onnx_models:/app/onnx_models
 
   postgres:
     image: postgres:15

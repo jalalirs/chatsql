@@ -81,6 +81,7 @@ async def detailed_health_check(
             "api_key_configured": bool(settings.OPENAI_API_KEY),
             "base_url": settings.OPENAI_BASE_URL,
             "model": settings.OPENAI_MODEL,
+            "embedding_model": settings.OPENAI_EMBEDDING_MODEL,
             "message": "LLM configuration is valid" if settings.OPENAI_API_KEY else "OpenAI API key not configured"
         }
         
@@ -234,7 +235,8 @@ async def vanna_health_check(
                 vanna_config = VannaConfig(
                     api_key=settings.OPENAI_API_KEY,
                     base_url=settings.OPENAI_BASE_URL,
-                    model=settings.OPENAI_MODEL
+                    model=settings.OPENAI_MODEL,
+                    embedding_model=settings.OPENAI_EMBEDDING_MODEL
                 )
                 
                 # Get full connection details for Vanna

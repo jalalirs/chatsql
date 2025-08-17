@@ -333,6 +333,7 @@ class ModelTrackedColumn(Base):
     value_distinct_count = Column(Integer, nullable=True)  # Number of distinct values
     value_data_type = Column(String(50), nullable=True)  # categorical, numerical, temporal, high_cardinality
     value_sample_size = Column(Integer, nullable=True)  # For high cardinality: sample size used
+    value_is_low_cardinality = Column(Boolean, nullable=True)  # For categorical data: true if 30 or fewer distinct values
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())

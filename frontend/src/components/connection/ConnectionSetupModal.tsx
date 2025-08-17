@@ -85,7 +85,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
       });
   
       const taskId = response.data.task_id;
-      console.log('🔍 Connection test started, task ID:', taskId);
+
   
       // Connect to SSE stream for test results
       if (taskId) {
@@ -95,7 +95,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
         const eventSource = new EventSource(streamUrl);
         
         eventSource.onopen = () => {
-          console.log('✅ SSE connection opened for connection test');
+  
         };
   
         // Generic message handler (fallback)
@@ -135,7 +135,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
         });
   
         eventSource.addEventListener('test_completed', (event) => {
-          console.log('✅ Test completed:', event.data);
+  
           try {
             const data = JSON.parse(event.data);
             if (data.success) {
@@ -158,7 +158,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
         });
   
         eventSource.addEventListener('connection_test_completed', (event) => {
-          console.log('✅ Connection test completed:', event.data);
+  
           try {
             const data = JSON.parse(event.data);
             if (data.success) {
@@ -181,7 +181,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
         });
   
         eventSource.addEventListener('test_failed', (event) => {
-          console.log('❌ Test failed:', event.data);
+  
           try {
             const data = JSON.parse(event.data);
             setTestResult({
@@ -199,7 +199,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
         });
   
         eventSource.addEventListener('connection_test_failed', (event) => {
-          console.log('❌ Connection test failed:', event.data);
+  
           try {
             const data = JSON.parse(event.data);
             setTestResult({
@@ -217,7 +217,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
         });
   
         eventSource.addEventListener('error', (event: any) => {
-          console.log('❌ Test error event:', event.data);
+  
           try {
             const data = JSON.parse(event.data);
             setTestResult({
@@ -292,7 +292,7 @@ export const ConnectionSetupModal: React.FC<ConnectionSetupModalProps> = ({
       formDataToSend.append('encrypt', formData.encrypt.toString());
       formDataToSend.append('trust_server_certificate', formData.trust_server_certificate.toString());
   
-      console.log('🔍 Creating connection with FormData:');
+
       // Use Array.from to fix TypeScript iteration issue
       Array.from(formDataToSend.entries()).forEach(([key, value]) => {
         console.log(`${key}: ${value}`);
