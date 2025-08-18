@@ -429,22 +429,15 @@ class ConversationService:
         session_id: str,
         user: Optional[User] = None
     ) -> Optional[str]:
-        """Generate SQL from natural language question"""
+        """Generate SQL from natural language question with chat history context"""
         try:
-            # Prepare chat history for Vanna
-            vanna_history = []
-            if chat_history:
-                for msg in chat_history[-10:]:  # Last 10 messages
-                    if msg.get("role") in ["user", "assistant", "human"]:
-                        vanna_history.append({
-                            "role": "human" if msg["role"] == "user" else msg["role"],
-                            "content": msg["content"]
-                        })
+            await sse_logger.info(f"Original question: {question}")
             
-            sql = vanna_instance.generate_sql(
+            # Pass chat history directly to Vanna for processing
+            sql = vanna_instance.generate_sql_with_context(
                 question=question, 
-                allow_llm_to_see_data=True, 
-                chat_history=vanna_history
+                chat_history=chat_history,
+                allow_llm_to_see_data=True
             )
             
             if sql:

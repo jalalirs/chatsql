@@ -99,19 +99,14 @@ class MyVanna(OpenAI_Chat, ChromaDB_VectorStore):
         
         # Override the generate_sql method to use our custom prompt logic with DDL
         def generate_sql_with_custom_prompt(self, question: str, **kwargs):
-            """Override generate_sql to use our custom prompt logic with DDL"""
+            """Override generate_sql to use our custom prompt logic with DDL and context awareness"""
             logger.info("Using custom generate_sql method")
             
-            # Get training data from ChromaDB
-            question_sql_list = self.get_similar_question_sql(question, k=5)
-            logger.info(f"Found {len(question_sql_list) if question_sql_list else 0} similar Q&A pairs")
-            
-            # Since we now train with DDL during training, we can use Vanna's built-in method
-            # The DDL information is already in ChromaDB from the training phase
-            logger.info("Using Vanna's built-in generate_sql since DDL is now trained")
+            # Check if this is a context-aware question and process it
+            processed_question = self._process_context_aware_question(question)
             
             # Call the parent method which will use all the trained data (including DDL)
-            sql = super().generate_sql(question, **kwargs)
+            sql = super().generate_sql(processed_question, **kwargs)
             
             # Fix TOP spacing issues
             sql = self.fix_top_spacing(sql)
@@ -120,6 +115,25 @@ class MyVanna(OpenAI_Chat, ChromaDB_VectorStore):
         
         # Bind the custom generate_sql method
         self.generate_sql = types.MethodType(generate_sql_with_custom_prompt, self)
+        
+        # Add new method for handling chat history
+        def generate_sql_with_context(self, question: str, chat_history=None, **kwargs):
+            """Generate SQL with chat history context processing"""
+            logger.info("Using generate_sql_with_context method")
+            
+            # Process chat history to create context-aware question
+            context_aware_question = self._build_context_aware_question(question, chat_history)
+            
+            # Call the parent generate_sql method with the processed question
+            sql = super().generate_sql(context_aware_question, **kwargs)
+            
+            # Fix TOP spacing issues
+            sql = self.fix_top_spacing(sql)
+            
+            return sql
+        
+        # Bind the new method
+        self.generate_sql_with_context = types.MethodType(generate_sql_with_context, self)
     
     def fix_top_spacing(self, sql: str) -> str:
         """Fix TOP1 spacing issues in generated SQL"""
@@ -200,3 +214,69 @@ class MyVanna(OpenAI_Chat, ChromaDB_VectorStore):
         except Exception as e:
             logger.error(f"❌ ChromaDB write permissions test failed at {chromadb_path}: {e}")
             raise
+    
+    def _build_context_aware_question(self, current_question: str, chat_history: List[Dict[str, str]]) -> str:
+        """
+        Build a context-aware question by incorporating relevant chat history.
+        """
+        logger.info(f"Building context-aware question for: '{current_question}'")
+        logger.info(f"Chat history: {chat_history}")
+        
+        if not chat_history:
+            logger.info("No chat history, returning original question")
+            return current_question
+        
+        # Build a clean conversation context
+        conversation_context = []
+        
+        # Look at the last few messages to build context
+        recent_messages = chat_history[-6:]  # Last 6 messages (3 Q&A pairs)
+        
+        for i, msg in enumerate(recent_messages):
+            role = msg.get("role", "")
+            content = msg.get("content", "").strip()
+            
+            if not content:
+                continue
+                
+            if role == "user":
+                # Clean up user question - remove any SQL or technical details
+                clean_content = content
+                if "```sql" in content:
+                    # Extract only the question part before SQL
+                    clean_content = content.split("```sql")[0].strip()
+                conversation_context.append(f"User: {clean_content}")
+                
+            elif role == "assistant":
+                # Extract the key information from assistant response
+                if "Generated SQL:" in content:
+                    # Extract the SQL part for context
+                    sql_start = content.find("```sql")
+                    if sql_start != -1:
+                        sql_end = content.find("```", sql_start + 3)
+                        if sql_end != -1:
+                            sql_query = content[sql_start + 6:sql_end].strip()
+                            conversation_context.append(f"Assistant: Generated SQL query: {sql_query}")
+                        else:
+                            conversation_context.append("Assistant: Generated a SQL query")
+                    else:
+                        conversation_context.append("Assistant: Generated a SQL query")
+                else:
+                    # For non-SQL responses, include a summary
+                    conversation_context.append("Assistant: Provided analysis and results")
+        
+        # Build the final context-aware question
+        if conversation_context:
+            context_summary = "\n".join(conversation_context[-4:])  # Last 4 context items
+            enhanced_question = f"""Previous conversation context:
+{context_summary}
+
+Current question: {current_question}
+
+Please consider the conversation context when generating the SQL query."""
+            
+            logger.info(f"Enhanced question with context: {enhanced_question}")
+            return enhanced_question
+        
+        logger.info("No useful context found, returning original question")
+        return current_question

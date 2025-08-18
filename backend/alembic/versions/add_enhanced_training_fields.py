@@ -23,6 +23,15 @@ def upgrade():
     op.add_column('model_training_questions', sa.Column('difficulty', sa.String(length=50), nullable=True))
     op.add_column('model_training_questions', sa.Column('generated_by', sa.String(length=50), nullable=True, server_default='manual'))
     op.add_column('model_training_questions', sa.Column('is_validated', sa.Boolean(), nullable=True, server_default='false'))
+    
+    # Add value analysis fields to model_tracked_columns table
+    op.add_column('model_tracked_columns', sa.Column('value_categories', postgresql.JSONB(), nullable=True))
+    op.add_column('model_tracked_columns', sa.Column('value_range_min', sa.String(100), nullable=True))
+    op.add_column('model_tracked_columns', sa.Column('value_range_max', sa.String(100), nullable=True))
+    op.add_column('model_tracked_columns', sa.Column('value_distinct_count', sa.Integer(), nullable=True))
+    op.add_column('model_tracked_columns', sa.Column('value_data_type', sa.String(50), nullable=True))
+    op.add_column('model_tracked_columns', sa.Column('value_sample_size', sa.Integer(), nullable=True))
+    op.add_column('model_tracked_columns', sa.Column('value_is_low_cardinality', sa.Boolean(), nullable=True))
 
 
 def downgrade():

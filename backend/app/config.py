@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    SQLALCHEMY_LOG_LEVEL: str = "ERROR"  # Set to ERROR to suppress SQLAlchemy engine logs
     LOG_FILE: Optional[str] = None
     
     # Analytics & Monitoring

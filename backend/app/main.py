@@ -15,6 +15,19 @@ from app.api import (
 logging.basicConfig(level=logging.INFO if not settings.DEBUG else logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# Suppress SQLAlchemy engine logs
+sqlalchemy_level = getattr(logging, settings.SQLALCHEMY_LOG_LEVEL.upper(), logging.ERROR)
+logging.getLogger("sqlalchemy.engine").setLevel(sqlalchemy_level)
+logging.getLogger("sqlalchemy.pool").setLevel(sqlalchemy_level)
+logging.getLogger("sqlalchemy.dialects").setLevel(sqlalchemy_level)
+logging.getLogger("sqlalchemy").setLevel(sqlalchemy_level)
+logging.getLogger("sqlalchemy.orm").setLevel(sqlalchemy_level)
+
+# Set specific log levels based on settings
+if settings.LOG_LEVEL:
+    numeric_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+    logging.getLogger().setLevel(numeric_level)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
