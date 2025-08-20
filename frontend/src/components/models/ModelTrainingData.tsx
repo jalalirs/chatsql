@@ -42,6 +42,7 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate, sho
   const [validatingQuestion, setValidatingQuestion] = useState<string | null>(null);
   const [validationResults, setValidationResults] = useState<{[key: string]: any[]}>({});
   const [showValidationResults, setShowValidationResults] = useState<Set<string>>(new Set());
+  const [showAllRows, setShowAllRows] = useState<Set<string>>(new Set());
   const [trackedTables, setTrackedTables] = useState<any[]>([]);
   const [trackedColumns, setTrackedColumns] = useState<ModelTrackedColumn[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
@@ -128,6 +129,18 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate, sho
     });
   };
 
+  const toggleShowAllRows = (questionId: string) => {
+    setShowAllRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(questionId)) {
+        newSet.delete(questionId);
+      } else {
+        newSet.add(questionId);
+      }
+      return newSet;
+    });
+  };
+
   if (loading) {
     return (
       <div className="bg-white shadow rounded-lg p-6">
@@ -181,16 +194,18 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate, sho
               onToggleAdd={() => setShowAddDocumentation(!showAddDocumentation)}
             />
           )}
-          {activeTab === 'questions' && (
-            <TrainingQuestions 
-              trainingData={trainingData} 
-              modelId={model.id} 
-              onUpdate={loadTrainingData}
-              showAdd={showAddQuestion}
-              onToggleAdd={() => setShowAddQuestion(!showAddQuestion)}
-              model={model}
-            />
-          )}
+                     {activeTab === 'questions' && (
+             <TrainingQuestions 
+               trainingData={trainingData} 
+               modelId={model.id} 
+               onUpdate={loadTrainingData}
+               showAdd={showAddQuestion}
+               onToggleAdd={() => setShowAddQuestion(!showAddQuestion)}
+               model={model}
+               showAllRows={showAllRows}
+               toggleShowAllRows={toggleShowAllRows}
+             />
+           )}
           {activeTab === 'columns' && (
              <TablesSchema 
                trainingData={trainingData} 
@@ -446,7 +461,9 @@ const TrainingQuestions: React.FC<{
   showAdd: boolean;
   onToggleAdd: () => void;
   model: any; // Add model prop for tracked tables
-}> = ({ trainingData, modelId, onUpdate, showAdd, onToggleAdd, model }) => {
+  showAllRows: Set<string>;
+  toggleShowAllRows: (questionId: string) => void;
+}> = ({ trainingData, modelId, onUpdate, showAdd, onToggleAdd, model, showAllRows, toggleShowAllRows }) => {
   const [questions, setQuestions] = useState<any[]>([]);
   
 
@@ -696,6 +713,8 @@ const TrainingQuestions: React.FC<{
       validation_notes: question.validation_notes || ''
     });
     setEditingQuestion(question.id);
+    // Hide the manual question form when editing
+    setShowManualQuestion(false);
   };
 
   const startCreate = () => {
@@ -714,6 +733,7 @@ const TrainingQuestions: React.FC<{
   const cancelEdit = () => {
     setEditingQuestion(null);
     setCreatingQuestion(false);
+    setShowManualQuestion(false);
     resetForm();
   };
 
@@ -1390,7 +1410,9 @@ const TrainingQuestions: React.FC<{
                         </tr>
                       </thead>
                       <tbody>
-                        {validationResults[question.id].slice(0, 10).map((row: any, index: number) => (
+                        {validationResults[question.id]
+                          .slice(0, showAllRows.has(question.id) ? undefined : 10)
+                          .map((row: any, index: number) => (
                           <tr key={index} className="border-b border-blue-100">
                             {Object.values(row).map((value: any, cellIndex: number) => (
                               <td key={cellIndex} className="py-2 px-2 text-blue-700">
@@ -1402,9 +1424,20 @@ const TrainingQuestions: React.FC<{
                       </tbody>
                     </table>
                     {validationResults[question.id].length > 10 && (
-                      <p className="text-xs text-blue-600 mt-2">
-                        Showing first 10 of {validationResults[question.id].length} rows
-                      </p>
+                      <div className="flex items-center justify-between mt-2">
+                        <p className="text-xs text-blue-600">
+                          {showAllRows.has(question.id) 
+                            ? `Showing all ${validationResults[question.id].length} rows`
+                            : `Showing first 10 of ${validationResults[question.id].length} rows`
+                          }
+                        </p>
+                        <button
+                          onClick={() => toggleShowAllRows(question.id)}
+                          className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                        >
+                          {showAllRows.has(question.id) ? 'Show Less' : 'View All Rows'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
