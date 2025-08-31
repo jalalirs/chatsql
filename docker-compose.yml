@@ -50,7 +50,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: python /app/patch-cors.py  # Override the command
+    # command: python /app/patch-cors.py  # Override the command
 
   frontend:
     build:

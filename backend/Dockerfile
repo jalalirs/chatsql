@@ -55,9 +55,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Create a non-root user for the application
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
-# Create necessary directories for your application
-RUN mkdir -p /app/data /app/uploads /app/chroma_db /app/onnx_models && \
-    chown -R appuser:appuser /app
+# Create necessary directories for your application and user home
+RUN mkdir -p /app/data /app/uploads /app/chroma_db /app/onnx_models /home/appuser /home/appuser/.cache && \
+    chown -R appuser:appuser /app /home/appuser && \
+    chmod -R 755 /home/appuser && \
+    chmod -R 777 /home/appuser/.cache
 
 # Copy application code into the image
 COPY . .
