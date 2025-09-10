@@ -28,11 +28,11 @@ class VannaService:
     def _get_chromadb_path(self, model_id: str) -> str:
         """Get the ChromaDB path for a model - use configurable base path for flexibility"""
         # Use configurable base path from settings for Docker/local flexibility
-        return os.path.join(settings.CHROMADB_BASE_PATH, "chroma_db", "models", model_id, "chromadb_store")
+        return os.path.join(settings.CHROMADB_BASE_PATH, "chroma_db", "models", model_id)
     
     def _get_latest_chromadb_path(self, model_id: str) -> str:
         """Get the ChromaDB path for querying - use configurable base path"""
-        chromadb_path = os.path.join(settings.CHROMADB_BASE_PATH, "chroma_db", "models", model_id, "chromadb_store")
+        chromadb_path = os.path.join(settings.CHROMADB_BASE_PATH, "chroma_db", "models", model_id)
         if os.path.exists(chromadb_path):
             return chromadb_path
         return None
@@ -45,7 +45,7 @@ class VannaService:
             return True
             
         # Check for the single chromadb_store directory
-        chromadb_path = os.path.join(model_dir, "chromadb_store")
+        chromadb_path = os.path.join(model_dir)
         if os.path.exists(chromadb_path):
             logger.warning(f"Found existing ChromaDB directory: {chromadb_path}")
             return False

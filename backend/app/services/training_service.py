@@ -1661,6 +1661,7 @@ class TrainingService:
             
             result = await db.execute(stmt)
             rows = result.all()
+
             
             return [
                 ModelTrainingColumnResponse(
@@ -1668,7 +1669,7 @@ class TrainingService:
                     model_id=model_id,
                     table_name=table.table_name,
                     column_name=col.column_name,
-                    data_type=col.value_data_type,
+                    data_type=col.value_data_type or "unknown",
                     description=col.description,
                     value_range=f"{col.value_range_min} to {col.value_range_max}" if col.value_range_min and col.value_range_max else (str(col.value_categories) if col.value_categories else "N/A"),
                     description_source="tracked_column",
