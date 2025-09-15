@@ -13,6 +13,7 @@ from app.models.schemas import (
     ModelStatus
 )
 from app.services.connection_service import ConnectionService
+from app.services.training_service import TrainingService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ class ModelService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.connection_service = ConnectionService()
+        self.training_service = TrainingService()
     
     async def create_model(self, model_data: ModelCreate, user_id: UUID) -> ModelResponse:
         """Create a new model for a connection"""
@@ -645,3 +647,21 @@ class ModelService:
                 created_at=column.created_at
             ) for column in columns
         ]
+    
+    async def get_training_data(self, model_id: UUID, user_id: UUID) -> Dict[str, Any]:
+        """Get training data for a model"""
+        # Verify model ownership
+        stmt = select(Model).where(
+            and_(
+                Model.id == model_id,
+                Model.user_id == user_id
+            )
+        )
+        result = await self.db.execute(stmt)
+        model = result.scalar_one_or_none()
+        
+        if not model:
+            raise ValueError("Model not found or access denied")
+        
+        # Get training data using the training service
+        return await self.training_service.get_model_training_data(self.db, str(model_id))

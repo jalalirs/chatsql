@@ -83,6 +83,14 @@ export const modelService = {
   async getModelTrackedColumns(modelId: string, tableId: string): Promise<ModelTrackedColumn[]> {
     const response = await api.get(`/models/${modelId}/tracked-tables/${tableId}/columns`);
     return response.data;
+  },
+
+  // Model download
+  async downloadModel(modelId: string): Promise<Blob> {
+    const response = await api.get(`/models/${modelId}/download`, {
+      responseType: 'blob'
+    });
+    return response.data;
   }
 };
 
@@ -100,3 +108,4 @@ export const getModelTrackedTables = modelService.getTrackedTables;
 export const removeTrackedTable = modelService.removeTrackedTable;
 export const updateTrackedColumns = modelService.updateTrackedColumns;
 export const getModelTrackedColumns = modelService.getModelTrackedColumns;
+export const downloadModel = modelService.downloadModel;

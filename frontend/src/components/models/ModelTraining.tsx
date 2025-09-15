@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, CheckCircle, Clock, Zap } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Zap, Download } from 'lucide-react';
 import { ModelDetail } from '../../types/models';
 import { trainModel, getTrainingData } from '../../services/training';
+import { downloadModel } from '../../services/models';
 import { sseConnection } from '../../services/sse';
 
 interface ModelTrainingProps {
@@ -16,6 +17,7 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate }) =
   const [error, setError] = useState<string | null>(null);
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [trainingPhase, setTrainingPhase] = useState<string>('');
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     loadTrainingData();
@@ -78,6 +80,31 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate }) =
     }
   };
 
+  const handleDownloadModel = async () => {
+    setDownloading(true);
+    setError(null);
+    
+    try {
+      const blob = await downloadModel(model.id);
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${model.name}_model.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+    } catch (err: any) {
+      console.error('Failed to download model:', err);
+      setError(err.response?.data?.detail || err.message || 'Failed to download model');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   // Can train if model is ready (has training data)
   const canTrain = trainingData && (trainingData.documentation?.length > 0 || trainingData.questions?.length > 0 || trainingData.columns?.length > 0);
 
@@ -96,7 +123,7 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate }) =
           </div>
         )}
 
-        {model.status === 'trained' ? (
+        {(model.status as string) === 'trained' ? (
           <div className="text-center py-8">
             <CheckCircle size={48} className="mx-auto text-green-600 mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">Model Trained Successfully!</h3>
@@ -127,13 +154,43 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate }) =
               </div>
             </div>
             
-            <button
-              onClick={handleTrainModel}
-              disabled={training}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-            >
-              {training ? 'Retraining...' : 'Retrain Model'}
-            </button>
+            {/* Debug info */}
+            <div className="mb-4 p-2 bg-gray-100 rounded text-xs">
+              Debug: Model status = {model.status}, Downloading = {downloading.toString()}
+              <br />
+              Model ID = {model.id}
+              <br />
+              Download button should be visible!
+            </div>
+            
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={handleDownloadModel}
+                disabled={downloading}
+                className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+              >
+                <Download size={16} />
+                {downloading ? 'Downloading...' : 'Download Model'}
+              </button>
+              
+              <button
+                onClick={handleTrainModel}
+                disabled={training}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                {training ? 'Retraining...' : 'Retrain Model'}
+              </button>
+            </div>
+            
+            {/* Test button */}
+            <div className="mt-4">
+              <button
+                onClick={() => console.log('Download button clicked!', { modelId: model.id, status: model.status })}
+                className="px-4 py-2 bg-red-500 text-white rounded"
+              >
+                TEST DOWNLOAD BUTTON
+              </button>
+            </div>
           </div>
         ) : canTrain ? (
           <div className="text-center py-8">
@@ -159,13 +216,26 @@ const ModelTraining: React.FC<ModelTrainingProps> = ({ model, onModelUpdate }) =
               </ul>
             </div>
             
-            <button
-              onClick={handleTrainModel}
-              disabled={training}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-            >
-              {training ? 'Starting Training...' : 'Start Training'}
-            </button>
+            <div className="flex gap-3 justify-center">
+              {(model.status as string) === 'trained' && (
+                <button
+                  onClick={handleDownloadModel}
+                  disabled={downloading}
+                  className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  <Download size={16} />
+                  {downloading ? 'Downloading...' : 'Download Model'}
+                </button>
+              )}
+              
+              <button
+                onClick={handleTrainModel}
+                disabled={training}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                {training ? 'Starting Training...' : 'Start Training'}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="text-center py-8">

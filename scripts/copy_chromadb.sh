@@ -22,3 +22,4 @@ if [ -d "./chroma_db/models" ]; then
 else
     echo "No models directory found"
 fi
+

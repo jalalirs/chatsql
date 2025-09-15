@@ -1,7 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from uuid import UUID
+import os
+import zipfile
+import tempfile
+import shutil
+from pathlib import Path as PathLib
 
 from app.core.database import get_async_db
 from app.dependencies import get_current_user
@@ -13,6 +19,8 @@ from app.models.schemas import (
 )
 from app.services.model_service import ModelService
 from app.models.database import User
+import logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -272,3 +280,90 @@ async def analyze_tracked_column_values(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to analyze column values: {str(e)}")
+
+@router.get("/{model_id}/download")
+async def download_model(
+    model_id: UUID = Path(..., description="Model ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Download model files as a ZIP archive"""
+    try:
+        model_service = ModelService(db)
+        model = await model_service.get_model(model_id, current_user.id)
+        if not model:
+            raise HTTPException(status_code=404, detail="Model not found")
+        
+        # Check if model is trained
+        if model.status != "trained":
+            raise HTTPException(status_code=400, detail="Model must be trained before downloading")
+        
+        # Use the correct path from vanna service
+        model_dir = f"/app/chroma_db/models/{model_id}"
+        
+        # Debug logging
+        logger.info(f"Checking model directory: {model_dir}")
+        logger.info(f"Directory exists: {os.path.exists(model_dir)}")
+        if os.path.exists(model_dir):
+            logger.info(f"Directory contents: {os.listdir(model_dir)}")
+        # Create a temporary directory for the ZIP file
+        temp_dir = tempfile.mkdtemp()
+        zip_path = os.path.join(temp_dir, f"{model.name}_model.zip")
+        if not os.path.exists(model_dir) or not os.listdir(model_dir):
+            # Create a ZIP with a helpful message
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.writestr("README.txt", f"""Model Download - {model.name}
+
+Model ID: {model_id}
+Status: {model.status}
+
+⚠️  WARNING: No model files found!
+
+This model shows as 'trained' but no actual model files were created. This could mean:
+
+1. The training process didn't complete successfully
+2. The model files were created in a temporary location and cleaned up
+3. There's an issue with the model training process
+
+To fix this:
+1. Try retraining the model
+2. Check the training logs for errors
+3. Ensure the model has sufficient training data
+
+Searched for model files at: {model_dir}
+""")
+            
+            return FileResponse(
+                path=zip_path,
+                filename=f"{model.name}_model.zip",
+                media_type="application/zip"
+            )
+        
+        
+        
+        
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # Add model files from the found directory
+                for root, dirs, files in os.walk(model_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, model_dir)
+                        zipf.write(file_path, arcname)
+            
+            # Return the ZIP file
+            return FileResponse(
+                path=zip_path,
+                filename=f"{model.name}_model.zip",
+                media_type="application/zip"
+            )
+            
+        except Exception as e:
+            # Clean up temp directory on error
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise e
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to download model: {str(e)}")

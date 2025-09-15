@@ -156,12 +156,41 @@ class MyVanna(OpenAI_Chat, ChromaDB_VectorStore):
                 shutil.rmtree(chromadb_path)
                 logger.info(f"Removed ChromaDB directory: {chromadb_path}")
             
-            # Reinitialize ChromaDB
-            ChromaDB_VectorStore.__init__(self, config={"path": chromadb_path, "anonymized_telemetry": False})
+            # Reinitialize ChromaDB with proper config
+            chroma_config = {
+                "path": chromadb_path,
+                "anonymized_telemetry": False,
+                "is_persistent": True,
+                "allow_reset": True
+            }
+            ChromaDB_VectorStore.__init__(self, config=chroma_config)
             logger.info("ChromaDB reinitialized after clearing")
             
         except Exception as e:
             logger.error(f"Failed to clear training data: {e}")
+            raise
+    
+    def ensure_persistence(self):
+        """Ensure ChromaDB data is properly persisted to disk"""
+        try:
+            # Get the ChromaDB path
+            chromadb_path = self._vanna_config.get("path", "./chroma")
+            logger.info(f"Ensuring persistence for ChromaDB at: {chromadb_path}")
+            
+            # Check if the directory exists and has files
+            if os.path.exists(chromadb_path):
+                files = os.listdir(chromadb_path)
+                logger.info(f"ChromaDB directory exists with {len(files)} files: {files}")
+            else:
+                logger.warning(f"ChromaDB directory does not exist: {chromadb_path}")
+                
+            # Force a sync/flush if available
+            if hasattr(self, 'client') and hasattr(self.client, 'persist'):
+                self.client.persist()
+                logger.info("Forced ChromaDB persistence")
+            
+        except Exception as e:
+            logger.error(f"Failed to ensure persistence: {e}")
             raise
     
     def connect_to_database(self, db_config):

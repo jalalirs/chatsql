@@ -38,9 +38,7 @@ services:
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - REFRESH_TOKEN_EXPIRE_DAYS=7
       - CHROMADB_BASE_PATH=/app
-    depends_on:
-      - postgres
-      - mssql
+    
     volumes:
       - ./backend:/app
       - ./backend/uploads:/app/uploads
@@ -55,7 +53,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5434:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

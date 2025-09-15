@@ -7,3 +7,17 @@ node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+build
+dist
+coverage
+.nyc_output
+.cache
+.DS_Store
+*.log
+*.tgz
+*.tar.gz
+.vscode
+.idea
+*.swp
+*.swo
+*~

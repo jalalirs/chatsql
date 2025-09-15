@@ -601,6 +601,51 @@ class ConnectionService:
         except Exception as e:
             logger.error(f"Failed to get table columns: {e}")
             raise
+    
+    async def execute_query(self, db: AsyncSession, connection_id: str, query: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Execute a SQL query on the connection and return results"""
+        try:
+            connection = await self.get_connection_by_id(db, connection_id)
+            if not connection:
+                raise ValueError("Connection not found")
+            
+            # Build connection string
+            connection_data = ConnectionCreate(
+                name=connection.name,
+                server=connection.server,
+                database_name=connection.database_name,
+                username=connection.username,
+                password=connection.password,
+                driver=connection.driver
+            )
+            
+            connection_string = self._build_odbc_connection_string(connection_data)
+            
+            # Execute query
+            with pyodbc.connect(connection_string) as conn:
+                cursor = conn.cursor()
+                cursor.execute(query)
+                
+                # Get column names
+                columns = [column[0] for column in cursor.description] if cursor.description else []
+                
+                # Fetch all results
+                rows = cursor.fetchall()
+                
+                # Convert to list of dictionaries
+                results = []
+                for row in rows:
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        column_name = columns[i] if i < len(columns) else f"column_{i}"
+                        row_dict[column_name] = value
+                    results.append(row_dict)
+                
+                return results, columns
+                
+        except Exception as e:
+            logger.error(f"Failed to execute query: {e}")
+            raise
 
 # Global instance
 connection_service = ConnectionService()

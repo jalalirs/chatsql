@@ -310,6 +310,12 @@ class VannaService:
                     logger.error(f"Failed to train table description {table_name}: {e}")
             
             if progress_callback:
+                await progress_callback(95, "Ensuring data persistence...")
+            
+            # Ensure data is persisted to disk
+            vanna_instance.ensure_persistence()
+            
+            if progress_callback:
                 await progress_callback(100, "Training completed successfully")
             
             logger.info(f"Vanna training completed for model {model_id}{user_info}")

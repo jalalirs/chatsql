@@ -14,6 +14,7 @@ from app.models.schemas import (
     ConnectionListResponse, TaskResponse, ConnectionDeleteResponse,
     SchemaRefreshRequest, SchemaRefreshResponse, ConnectionSchemaResponse
 )
+from pydantic import BaseModel
 from app.models.database import (
     Connection, TrainingTask, ConnectionStatus, User
 )
@@ -609,3 +610,69 @@ async def _update_task_status(db: AsyncSession, task_id: str, status: str, progr
         await db.commit()
     except Exception as e:
         logger.error(f"Failed to update task status: {e}")
+
+# SQL Query Execution Models
+class SqlQueryRequest(BaseModel):
+    query: str
+
+class SqlQueryResponse(BaseModel):
+    success: bool
+    results: List[Dict[str, Any]] = []
+    columns: List[str] = []
+    error: Optional[str] = None
+    execution_time_ms: Optional[float] = None
+
+@router.post("/{connection_id}/execute-query", response_model=SqlQueryResponse)
+async def execute_sql_query(
+    connection_id: str,
+    request: SqlQueryRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(validate_api_key)
+):
+    """Execute a SQL query on the specified connection"""
+    try:
+        import time
+        start_time = time.time()
+        
+        # Get the connection
+        connection = await connection_service.get_connection_by_id(db, connection_id)
+        if not connection:
+            raise HTTPException(status_code=404, detail="Connection not found")
+        
+        # Check if user has access to this connection
+        if connection.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Check if connection is active
+        if connection.status != ConnectionStatus.TEST_SUCCESS:
+            raise HTTPException(status_code=400, detail="Connection is not active. Please test the connection first.")
+        
+        # Execute the query using the connection service
+        try:
+            results, columns = await connection_service.execute_query(db, connection_id, request.query)
+            
+            execution_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+            
+            return SqlQueryResponse(
+                success=True,
+                results=results,
+                columns=columns,
+                execution_time_ms=execution_time
+            )
+            
+        except Exception as query_error:
+            logger.error(f"Query execution failed: {query_error}")
+            execution_time = (time.time() - start_time) * 1000
+            
+            return SqlQueryResponse(
+                success=False,
+                error=str(query_error),
+                execution_time_ms=execution_time
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to execute SQL query: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to execute query: {str(e)}")

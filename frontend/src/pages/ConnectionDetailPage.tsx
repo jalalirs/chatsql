@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Database, CheckCircle, AlertCircle, Clock, Zap, Play, Upload, Settings, FileText, RefreshCw, Brain } from 'lucide-react';
+import { ArrowLeft, Database, CheckCircle, AlertCircle, Clock, Zap, Play, Upload, Settings, FileText, RefreshCw, Brain, Terminal } from 'lucide-react';
 import { Connection } from '../types/chat';
 import { chatService } from '../services/chat';
 import { sseConnection } from '../services/sse';
@@ -10,7 +10,7 @@ import { api } from '../services/auth';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:6020';
 
-type TabType = 'details' | 'schema-descriptions' | 'documentation' | 'training-data' | 'training';
+type TabType = 'details' | 'schema-descriptions' | 'sql-query';
 
 export const ConnectionDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -69,8 +69,11 @@ export const ConnectionDetailPage: React.FC = () => {
 
   const tabs = [
     { id: 'details', label: 'Details', icon: Database, description: 'Connection information and settings' },
-    { id: 'schema-descriptions', label: 'Schema & Descriptions', icon: Settings, description: 'Table structure and column descriptions' }
+    { id: 'schema-descriptions', label: 'Schema & Descriptions', icon: Settings, description: 'Table structure and column descriptions' },
+    { id: 'sql-query', label: 'SQL Query', icon: Terminal, description: 'Execute SQL queries directly on the database' }
   ];
+  
+  console.log('Tabs array:', tabs);
 
   if (loading) {
     return (
@@ -110,6 +113,8 @@ export const ConnectionDetailPage: React.FC = () => {
         return <DetailsTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
       case 'schema-descriptions':
         return <SchemaDescriptionsTab connection={connection} onConnectionUpdate={(updatedConnection) => setConnection(updatedConnection)} />;
+      case 'sql-query':
+        return <SqlQueryTab connection={connection} />;
       default:
         return null;
     }
@@ -981,8 +986,239 @@ const SchemaDescriptionsTab: React.FC<{ connection: Connection; onConnectionUpda
           })()}
         </div>
       )}
+    </div>
+  );
+};
 
+// SQL Query Tab Component
+const SqlQueryTab: React.FC<{ connection: Connection }> = ({ connection }) => {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<any[]>([]);
+  const [columns, setColumns] = useState<string[]>([]);
+  const [executing, setExecuting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [executionTime, setExecutionTime] = useState<number | null>(null);
+  const [queryHistory, setQueryHistory] = useState<string[]>([]);
 
+  const executeQuery = async () => {
+    if (!query.trim()) {
+      setError('Please enter a SQL query');
+      return;
+    }
+
+    setExecuting(true);
+    setError(null);
+    setResults([]);
+    setColumns([]);
+    setExecutionTime(null);
+
+    const startTime = Date.now();
+
+    try {
+      const response = await api.post(`/connections/${connection.id}/execute-query`, {
+        query: query.trim()
+      });
+
+      const endTime = Date.now();
+      setExecutionTime(endTime - startTime);
+
+      if (response.data.success) {
+        setResults(response.data.results || []);
+        setColumns(response.data.columns || []);
+        
+        // Add to query history if not already present
+        if (!queryHistory.includes(query.trim())) {
+          setQueryHistory(prev => [query.trim(), ...prev.slice(0, 9)]); // Keep last 10 queries
+        }
+      } else {
+        setError(response.data.error || 'Query execution failed');
+      }
+    } catch (err: any) {
+      const endTime = Date.now();
+      setExecutionTime(endTime - startTime);
+      setError(err.response?.data?.detail || err.message || 'Query execution failed');
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      executeQuery();
+    }
+  };
+
+  const loadQueryFromHistory = (historyQuery: string) => {
+    setQuery(historyQuery);
+    setError(null);
+  };
+
+  const clearQuery = () => {
+    setQuery('');
+    setResults([]);
+    setColumns([]);
+    setError(null);
+    setExecutionTime(null);
+  };
+
+  const formatValue = (value: any) => {
+    if (value === null || value === undefined) {
+      return <span className="text-gray-400 italic">NULL</span>;
+    }
+    if (typeof value === 'boolean') {
+      return <span className="text-blue-600">{value.toString()}</span>;
+    }
+    if (typeof value === 'number') {
+      return <span className="text-green-600">{value.toLocaleString()}</span>;
+    }
+    if (typeof value === 'string') {
+      return <span className="text-gray-900">{value}</span>;
+    }
+    return <span className="text-gray-900">{JSON.stringify(value)}</span>;
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Query Input */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-medium text-gray-900">SQL Query Editor</h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={clearQuery}
+              className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={executeQuery}
+              disabled={executing || !query.trim()}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              <Play size={16} className={executing ? 'animate-pulse' : ''} />
+              {executing ? 'Executing...' : 'Execute Query'}
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              SQL Query
+            </label>
+            <textarea
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Enter your SQL query here... (Ctrl+Enter to execute)"
+              className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+              disabled={executing}
+            />
+          </div>
+
+          <div className="text-xs text-gray-500">
+            💡 Tip: Use Ctrl+Enter (or Cmd+Enter on Mac) to execute the query quickly
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-center gap-2 text-red-800">
+              <AlertCircle size={16} />
+              <span className="font-medium">Query Error</span>
+            </div>
+            <p className="text-red-700 text-sm mt-1 font-mono">{error}</p>
+          </div>
+        )}
+
+        {executionTime !== null && (
+          <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-center gap-2 text-green-800">
+              <CheckCircle size={16} />
+              <span className="font-medium">Query executed successfully</span>
+              <span className="text-sm">({executionTime}ms)</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Query History */}
+      {queryHistory.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Recent Queries</h3>
+          <div className="space-y-2">
+            {queryHistory.map((historyQuery, index) => (
+              <button
+                key={index}
+                onClick={() => loadQueryFromHistory(historyQuery)}
+                className="w-full text-left p-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <div className="font-mono text-sm text-gray-700 truncate">
+                  {historyQuery}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Results */}
+      {results.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-medium text-gray-900">
+              Query Results ({results.length} rows)
+            </h3>
+            {executionTime !== null && (
+              <span className="text-sm text-gray-500">
+                Executed in {executionTime}ms
+              </span>
+            )}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full border border-gray-200 rounded-lg">
+              <thead className="bg-gray-50">
+                <tr>
+                  {columns.map((column, index) => (
+                    <th
+                      key={index}
+                      className="px-4 py-3 text-left text-sm font-medium text-gray-700 border-b"
+                    >
+                      {column}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((row, rowIndex) => (
+                  <tr key={rowIndex} className="border-b hover:bg-gray-50">
+                    {columns.map((column, colIndex) => (
+                      <td key={colIndex} className="px-4 py-3 text-sm">
+                        {formatValue(row[column])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* No Results */}
+      {results.length === 0 && !executing && !error && query.trim() && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <div className="text-center py-8">
+            <Database size={48} className="mx-auto text-gray-400 mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No Results</h3>
+            <p className="text-gray-500">
+              Your query executed successfully but returned no rows.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
