@@ -361,7 +361,7 @@ class TrainingService:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                max_tokens=200
+                max_completion_tokens=200
             )
             
             logger.info(f"🔍 AI Response for single column {column_name}: {response.choices[0].message.content}")
@@ -495,7 +495,7 @@ class TrainingService:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                max_tokens=1000
+                max_completion_tokens=1000
             )
             
             logger.info(f"🔍 AI Response for table {table_name}: {response.choices[0].message.content}")
@@ -539,7 +539,7 @@ class TrainingService:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                max_tokens=1000
+                max_completion_tokens=1000
             )
             
             # Parse the response to get descriptions for each column
@@ -1109,7 +1109,7 @@ class TrainingService:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=2000
+                max_completion_tokens=2000
             )
             
             # Parse AI response
@@ -1143,7 +1143,7 @@ class TrainingService:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=2000
+                max_completion_tokens=2000
             )
             
             # Parse AI response
@@ -2345,7 +2345,7 @@ class TrainingService:
             ],
             response_format={"type": "json_object"},
             temperature=0.7,
-            max_tokens=4000
+            max_completion_tokens=4000
         )
         
         content = response.choices[0].message.content
@@ -2673,7 +2673,7 @@ Generate a valid MSSQL query for the above question:
                     }
                 ],
                 temperature=0.1,
-                max_tokens=500
+                max_completion_tokens=500
             )
             
             sql = response.choices[0].message.content.strip()

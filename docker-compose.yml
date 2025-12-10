@@ -12,7 +12,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -26,7 +26,7 @@ services:
       - MSSQL_SA_PASSWORD=l.messi10
       - MSSQL_PID=Developer
     ports:
-      - "1433:1433"
+      - "1434:1433"
     volumes:
       - mssql_data:/var/opt/mssql
       - ./backend/scripts/create_test_db.sql:/docker-entrypoint-initdb.d/create_test_db.sql
@@ -46,7 +46,7 @@ services:
       - ./backend/uploads:/app/uploads
       - ./chromadb_model:/root/.cache/chroma/onnx_models/all-MiniLM-L6-v2/onnx
     ports:
-      - "6020:6020"
+      - "6021:6020"
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,14 +58,14 @@ services:
       dockerfile: Dockerfile
 
     ports:
-      - "3000:3000"
+      - "3001:3000"
     depends_on:
       - backend
     environment:
-      - REACT_APP_API_URL=http://localhost:6020
+      - REACT_APP_API_URL=http://localhost:6021
     command: |
       sh -c "
-      sed -i 's|http://localhost:6020|http://localhost:6020|g' /usr/share/nginx/html/static/js/*.js
+      sed -i 's|http://localhost:6020|http://localhost:6021|g' /usr/share/nginx/html/static/js/*.js
       exec nginx -g 'daemon off;'
       "
 
